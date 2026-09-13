@@ -25,6 +25,12 @@ struct Clip {
     double rmsDb = -99.0;
     double peakDb = -99.0;
     ClipPeaks peaks;       // кэш пиков
+    // Фаза 2 (редактура, PLAN.md 6.4): позиция/гейн/фейды применяются
+    // при рендере, сэмплы меняют только команды EditStack.
+    std::uint64_t startSample = 0;   // позиция клипа на таймлайне (move/align)
+    double gainDb = 0.0;             // clip-gain (не деструктивно)
+    std::uint64_t fadeInSamples = 0;    // линейный фейд от начала
+    std::uint64_t fadeOutSamples = 0;   // линейный фейд к концу
 };
 
 class ClipStore {
@@ -42,6 +48,9 @@ public:
     const std::vector<Clip>& takes() const { return takes_; }
     std::vector<Clip>& takes() { return takes_; }
     std::size_t takeCount() const { return takes_.size(); }
+    // Фаза 2: доступ по id тейка (-1 если нет) и удаление (undo split).
+    int takeIndexById(const std::string& id) const;
+    bool removeTakeById(const std::string& id);
 
     // Автоцвет по номеру тейка (различимые оттенки, тёмная тема).
     static std::uint32_t autoColor(int takeIndex);

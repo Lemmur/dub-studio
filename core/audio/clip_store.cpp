@@ -88,6 +88,23 @@ void ClipStore::peaksForRange(const Clip& clip, std::uint64_t fromSample, std::u
     }
 }
 
+int ClipStore::takeIndexById(const std::string& id) const {
+    for (std::size_t i = 0; i < takes_.size(); ++i) {
+        if (takes_[i].id == id) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+bool ClipStore::removeTakeById(const std::string& id) {
+    for (std::size_t i = 0; i < takes_.size(); ++i) {
+        if (takes_[i].id == id) {
+            takes_.erase(takes_.begin() + static_cast<std::ptrdiff_t>(i));
+            return true;
+        }
+    }
+    return false;
+}
+
 std::uint32_t ClipStore::autoColor(int takeIndex) {
     // Палитра различимых оттенков на тёмном фоне (по циклу).
     static const std::uint32_t kPalette[] = {

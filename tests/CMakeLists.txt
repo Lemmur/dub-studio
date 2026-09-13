@@ -6,6 +6,7 @@ add_executable(dubstudio_tests
   test_importer.cpp
   test_linesmodel.cpp
   test_audio.cpp
+  test_editing.cpp
 )
 
 target_include_directories(dubstudio_tests

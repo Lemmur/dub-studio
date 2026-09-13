@@ -1,6 +1,7 @@
-// TimelineWidget (Фаза 1): треки Track 0 REF-EN (locked) / MASTER-RU / TAKE-NN,
+// TimelineWidget (Фаза 1+2): треки Track 0 REF-EN (locked) / MASTER-RU / TAKE-NN,
 // волноформа с zoom колесом до сэмплов, линейка времени, playhead.
-// PLAN.md 6.2, 6.4, 13.
+// Фаза 2: клипы живут по startSample, выбор клипа кликом, drag-move клипа,
+// курсор (клик по линейке) + диапазон (Shift+клик), отрисовка фейдов (PLAN.md 6.4).
 #pragma once
 
 #include <QWidget>
@@ -27,10 +28,21 @@ public:
     // Транспорт дергает: перерисовать playhead/уровни (30 Гц).
     void tick();
 
+    // --- Фаза 2: редактура -----------------------------------------------------
+    int selectedClip() const { return selected_; } // индекс в ClipStore, -1 = нет
+    void selectClip(int clipIndex);                // подсветка + перерисовка
+    std::uint64_t cursorSample() const { return cursorSample_; }
+    void setCursor(std::uint64_t sample);          // курсор = анкер (схлопнуть диапазон)
+    // Диапазон Shift+клика в глобальных сэмплах таймлайна; false если пуст.
+    bool hasRange(std::uint64_t& from, std::uint64_t& to) const;
+
     QSize minimumSizeHint() const override;
 
 signals:
     void infoChanged(const QString& info); // текущий zoom/позиция в статус-бар
+    // Пользователь отпустил drag-move клипа: MainWindow применяет команду Move.
+    void clipMoved(int clipIndex, std::uint64_t newStartSample);
+    void selectionChanged();
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -55,6 +67,8 @@ private:
     void clampView();
     void zoomAt(double x, double factor);
     std::uint64_t playheadSample() const;
+    std::uint64_t sampleAtX(double x) const;          // сэмпл таймлайна по x виджета
+    int clipHit(double x, double y) const;            // индекс клипа или -1 (locked пропускаем)
 
     AudioEngine* engine_ = nullptr;
     ClipStore* store_ = nullptr;
@@ -63,8 +77,16 @@ private:
     double samplesPerPixel_ = 512.0; // zoom: от full-view до 1/64 сэмпла на пиксель
     std::uint64_t viewStart_ = 0;    // первый видимый сэмпл
 
-    bool dragging_ = false;
+    bool dragging_ = false;  // панорама пустым местом
     int dragLastX_ = 0;
+
+    // Фаза 2
+    int selected_ = -1;              // выбранный клип (индекс ClipStore)
+    std::uint64_t cursorSample_ = 0; // позиция курсора редактирования
+    std::uint64_t anchorSample_ = 0; // якорь диапазона (Shift+клик двигает курсор)
+    bool movingClip_ = false;        // drag-move выбранного клипа
+    double movePressX_ = 0.0;        // x захвата
+    std::uint64_t moveStartBegin_ = 0; // startSample клипа на момент захвата
 
     static constexpr int kHeaderW = 150;
     static constexpr int kRowH = 64;
