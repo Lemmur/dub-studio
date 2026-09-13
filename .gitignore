@@ -1,44 +1,33 @@
+# ASIO SDK — dual license (Proprietary / GPLv3), не коммитить (см. PLAN.md п.13).
+# Исходник уже скачан локально в ASIO-SDK_2.3.4_2025-10-15/ASIOSDK.
+ASIO-SDK_2.3.4_2025-10-15/
+third_party/asio_sdk/
+
 # Сборка
 build/
 out/
 cmake-build-*/
-CMakeFiles/
-CMakeCache.txt
-installers/
-
-# IDE
-.vs/
-.idea/
 *.user
-*.suo
-*.opensdf
+.vs/
 
-# Python
+# Qt
+*.pro.user*
+moc_*.cpp
+ui_*.h
+qrc_*.cpp
+
+# Python sidecar
 __pycache__/
 *.py[cod]
 .venv/
 venv/
 
-# Внешний SDK (скачивается вручную с сайта Steinberg, НЕ коммитить)
-third_party/asio_sdk/
-
-# Рабочие данные дубляжа
+# Проект и кэши (рабочая директория MyDub/ создаётся локально)
 MyDub/
 *.dubpack
-lines.db
-lines.db-wal
-lines.db-shm
-project.db
-project.db-wal
-project.db-shm
-audio_flac/
 cache/
-tmp/
 
-# Логи и временные файлы
-*.log
-*.tmp
-*.autosave
-
-# vcpkg / пакетные артефакты
-vcpkg_installed/
+# Секреты
+.env
+*API_KEY*
+secrets.json

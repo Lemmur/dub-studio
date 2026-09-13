@@ -1,13 +1,28 @@
-# Тесты RuDub (Catch2 через vcpkg): D:\dev\vcpkg\vcpkg install catch2:x64-windows
-# Сборка: cmake --preset debug -DRUDUB_BUILD_TESTS=ON && cmake --build --preset debug && ctest --preset debug
+# Catch2 (amalgamated) — тесты готовности фаз (PLAN.md, раздел 14).
 
-find_package(Catch2 QUIET)
-if(NOT Catch2_FOUND)
-  message(STATUS "Catch2 не найден — тесты пропускаются (vcpkg install catch2:x64-windows)")
-  return()
-endif()
+add_executable(dubstudio_tests
+  third_party/catch2/catch_amalgamated.cpp
+  test_database.cpp
+  test_importer.cpp
+  test_linesmodel.cpp
+)
 
-add_executable(rudub_tests smoke.cpp)
-target_link_libraries(rudub_tests PRIVATE Catch2::Catch2WithMain rudub_project)
+target_include_directories(dubstudio_tests
+  PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/catch2
+    ${CMAKE_CURRENT_SOURCE_DIR}/../app
+)
 
-add_test(NAME smoke COMMAND rudub_tests)
+target_link_libraries(dubstudio_tests
+  PRIVATE
+    dubstudio_core
+    dubstudio_ui
+    Qt6::Widgets
+)
+
+add_test(NAME dubstudio_tests COMMAND dubstudio_tests)
+
+# Qt DLL лежат в bin Qt, добавляем их в PATH теста (иначе 0xc0000135).
+set_tests_properties(dubstudio_tests PROPERTIES
+  ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")

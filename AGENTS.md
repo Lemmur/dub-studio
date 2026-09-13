@@ -1,50 +1,94 @@
-# AGENTS.md — RuDubStudio
+# AGENTS.md — DubStudio
 
-Стек: C++20, Qt6 Widgets, CMake+Ninja, SQLite WAL.
-Аудио: RtAudio + ASIO SDK (third_party/asio_sdk, не коммитить).
-DSP: libsndfile, SoXR, RubberBand, Eigen.
-Python 3.11 sidecar по gRPC только для ИИ.
-GPL только как CLI (vgmstream), sound2wem по его лицензии, не линковать GPL в ядро.
-Структура: include/ интерфейсы, core/ реализация, tests/ Catch2.
-Один PR = один модуль. Перед кодом план в docs/plans/<модуль>.md.
-UI-текст только на русском.
-Все мутации через Command + undo_log.
-В callback ASIO: только ring-buffer, без malloc/I/O/SQL/mutex.
-Фазы: 0 -> 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9. Не перескакивать.
-Коммиты: conventional commits, описание на русском.
+> Единый файл правил для всех агентных ИИ (Roo, Cline, Copilot, Claude, Cursor).
+> Полная аналитика проекта — в [`PLAN.md`](PLAN.md:1). Дублировать решения из него сюда запрещено,
+> здесь только операционные правила для агента.
+
+## Стек
+
+- `C++20`, `Qt 6.5 LTS Widgets`, `CMake + Ninja`, `SQLite WAL`.
+- Аудио: `RtAudio (MIT)` + `ASIO SDK 2.3.4` (`third_party/asio_sdk`, НЕ коммитить;
+  исходник уже лежит в `ASIO-SDK_2.3.4_2025-10-15/ASIOSDK`, при сборке брать `common/` + `host/` + `host/pc/` оттуда).
+- `DSP`: `libsndfile`, `dr_wav`, `SoXR`, `RubberBand`, `Eigen`.
+- `JSON`: `nlohmann::json` (`ordered_json` — порядок ключей = порядок реплик в сцене).
+- Тесты: `Catch2`. Сеть: `Qt Network` (`REST` к `OpenRouter` / `ElevenLabs`).
+- `Python 3.11 sidecar` по `gRPC / ZeroMQ + JSON` ТОЛЬКО для ИИ (`denoise`, `llm_proxy`, `RVC` опционально).
+  Падение `CUDA / GIL / OOM` в sidecar не должно ронять `ASIO callback`.
+
+## Лицензии (жёстко)
+
+- В линковку ядра — только `open-source` без `GPL`-заражения.
+- `GPL` допускается только как внешний `CLI` (`vgmstream`), вызывать через `subprocess`.
+- `sound2wem` — внешний исходник в `third_party/sound2wem`, вызывать как `subprocess`, лицензию зафиксировать в [`docs/licenses.md`](docs/licenses.md:1).
+- `ASIO SDK` — dual license (Proprietary / GPLv3), НЕ коммитить (см. [`.gitignore`](.gitignore:1)).
+
+## Структура репо
+
+```text
+app/                 # MainWindow, QDockWidget-панели
+include/dubstudio/   # публичные интерфейсы (*.h)
+core/audio/          # AudioEngine (RtAudio), ClipStore
+core/project/        # ProjectManager, importer, TakeManager, UndoStack, JobQueue, ExportPack
+core/text/           # TextEngine, LipSyncAnalyzer
+workers/python/      # denoise_server.py, llm_proxy.py, rvc_server.py (опц.)
+integrations/        # ElevenLabsClient, OpenRouterProvider, WemBridge
+plugins/             # <name>/manifest.json + python-скрипт, ядро не пересобирается
+tests/               # Catch2
+third_party/rtaudio  # сабмодуль/вендор
+third_party/sound2wem# исходники кодера, сборка sound2wem.exe
+third_party/asio_sdk # в .gitignore, НЕ коммитить
+docs/plans/          # план на каждый модуль ПЕРЕД кодом
+```
+
+## Железные правила
+
+1. `UI`-текст только на русском. Тёмная тема по умолчанию.
+2. Все мутации состояния — через паттерн `Command` + запись в таблицу `undo_log`. Откат — с открытия сессии.
+3. В `ASIO callback` только `ring-buffer`. Запрещены `malloc`, `I/O`, `SQL`, `mutex`.
+4. Один `PR` = один модуль. Ветки `feat/*`. Коммиты `conventional commits`, описание на русском.
+5. Перед кодом модуля — план в `docs/plans/<модуль>.md`.
+6. Фазы строго по порядку `0 -> 1 -> ... -> 9` (см. [`PLAN.md`](PLAN.md:565)). Не перескакивать.
+   Каждая фаза заканчивается тестом из колонки «Готовность» и коммитом.
+7. Формат `combined.json` — 4 уровня `{file_id: {quest_id: {guid: {en, ru, speaker_name, speaker_internal, dur}}}}`
+   (см. [`PLAN.md`](PLAN.md:149)). Пустой `speaker_name` → `UNKNOWN`, `speaker_confidence = 0.0`.
+8. Суффикс вида `"Ambrus (whisper)"` хранить целиком для отображения; для `voice-map` чистить скобки,
+   сам суффикс маппить в пресет параметров.
+9. Проект по умолчанию `48000 Гц / 24-bit`. `Direct Monitoring OFF` по умолчанию.
+10. Кэш `ElevenLabs` обязателен: `cache/elevenlabs/{sha256(audio+voice_id+params)}.flac + meta.json`.
 
 ## Среда разработки (эта машина, Windows 11 x64)
 
 | Инструмент | Версия / путь |
 |---|---|
 | Компилятор | MSVC, VS "18" Build Tools: `C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools` |
-| CMake + Ninja | в составе Build Tools; добавляются в PATH через `scripts\env.cmd` |
-| Qt 6.5.3 LTS | `D:\Qt\6.5.3\msvc2019_64` (Widgets, Sql + плагин qsqlite, Network, Svg, Tools) |
+| CMake + Ninja | в составе Build Tools (прописаны в `scripts\configure.bat`) |
+| Qt 6.5.3 LTS | `C:\Qt\6.5.3\msvc2019_64` (Widgets, Network, Sql + qsqlite); на диске `D:` доступен дубль `D:\Qt\6.5.3\msvc2019_64` |
 | vcpkg | `D:\dev\vcpkg` (пакеты ставить по мере необходимости фаз) |
 | Python | системный 3.14 (утилиты); для sidecar — отдельный Python 3.11 (Фаза 6) |
 | git | 2.53 |
 
 Правила работы со средой:
 
-- Перед любой ручной командой сборки в терминале: `call scripts\env.cmd`.
-- Полная сборка: `scripts\build.cmd` (CMakePresets → Ninja, `build\release\`).
-- Qt передавать через `CMAKE_PREFIX_PATH=D:/Qt/6.5.3/msvc2019_64` (уже зашито в пресеты).
-- ASIO SDK не коммитить: скачать вручную с сайта Steinberg в `third_party/asio_sdk/`.
-- `qtdeclarative` не устанавливался (не нужен для Widgets); при необходимости:
-  `python -m aqt install-qt windows desktop 6.5.3 win64_msvc2019_64 --archives qtdeclarative -O D:\Qt`.
-- Свободное место на C: ограничено (~6 GB) — тяжёлые сборки и кэши держать на D:.
+- Конфигурация: `scripts\configure.bat` (Ninja + MSVC + Qt, всё зашито).
+- Полная сборка: `scripts\build.bat` (первый запуск сам вызывает configure; `build\`).
+- Тесты: `scripts\test.bat` (`ctest`).
+- Qt передаётся через `CMAKE_PREFIX_PATH=C:/Qt/6.5.3/msvc2019_64` (уже зашито в скрипты).
+- ASIO SDK не коммитить: локальная копия в `ASIO-SDK_2.3.4_2025-10-15/ASIOSDK`,
+  при сборке копировать `common/` + `host/` + `host/pc/` в `third_party/asio_sdk/`.
+- Свободное место на `C:` ограничено (~6 GB) — тяжёлые сборки и кэши держать на `D:`.
+- Без `Qt`/`MSVC` агент выполняет только фазы, не требующие сборки (доки, `Python`-утилиты, схемы).
 
-## Карта фаз (полный план — PLAN.md, раздел 14)
+## Сборка (Windows 10/11 x64, MSVC)
 
-| Фаза | Содержимое |
-|---|---|
-| 0 | Скелет: CMake+Qt, schema.sql, импорт combined.json, дерево файл->сцена->реплики, sound2wem |
-| 1 | Аудио: RtAudio+ASIO, запись, волноформа |
-| 2 | Редактура: trim/split/..., Undo+автосейв |
-| 3 | WEM: decode/encode, валидация |
-| 4 | Тейки: циклозапись, автоцвет |
-| 5 | LLM: ILlmProvider, OpenRouter/Ollama |
-| 6 | Denoise: sidecar, DeepFilterNet3 |
-| 7 | ElevenLabs: STS/TTS, voice_map, кэш |
-| 8 | Pack: .dubpack, CAS |
-| 9 | Полировка |
+```bat
+scripts\configure.bat   :: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+scripts\build.bat       :: cmake --build build + windeployqt
+scripts\test.bat        :: ctest --test-dir build
+```
+
+## MCP
+
+Доступные серверы (см. [`.vscode/mcp.json`](.vscode/mcp.json:1), [`.roo/mcp.json`](.roo/mcp.json:1)):
+`filesystem` (только корень репо), `git`, `github` (ветки `feat/*`, `PR`), `sqlite`
+(только `SELECT` по реальной БД `MyDub/lines.db`), `fetch` (доки `RtAudio` / `OpenRouter` /
+`ElevenLabs` / `sound2wem`), `memory` (фиксация решений).

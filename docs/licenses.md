@@ -1,24 +1,26 @@
-# Лицензии зависимостей RuDub Studio
+# Лицензии сторонних компонентов
 
-Правило (PLAN.md, раздел 1.2 №13): в линковке ядра — только open-source.
-GPL в ядро не линковать; GPL-инструменты — только внешний CLI (subprocess).
+Фаза 0 — зафиксировано по фактически подключённым зависимостям.
+Правило (AGENTS.md): в линковку ядра — только open-source без GPL-заражения.
 
-| Компонент | Лицензия | Тип интеграции | Статус |
-|---|---|---|---|
-| Qt 6.5.3 LTS (Widgets, Sql, Network, Svg, Tools) | LGPL-3.0 / GPL-3.0 (dual) | линковка (LGPL) | установлен D:\Qt |
-| RtAudio | MIT | линковка (Фаза 1) | клонировать в third_party |
-| Steinberg ASIO SDK | проприетарная (Steinberg) | внешний SDK, **не коммитить** | скачать вручную |
-| libsndfile | LGPL-2.1+ | линковка (vcpkg, Фаза 1) | — |
-| SoXR | LGPL-2.1+ | линковка (vcpkg, Фаза 2) | — |
-| RubberBand | GPL-2.0+/**коммерческая** | ⚠ проверить совместимость (Фаза 2) | — |
-| Eigen | MPL-2 | header-only (vcpkg) | — |
-| Catch2 | BSL-1.0 | тесты | — |
-| nlohmann::json | MIT | header-only | — |
-| dr_wav | MIT-0 | header-only (Фаза 1) | — |
-| vgmstream | LGPL-2.1+ (CLI) | **внешний CLI**, не линковать | — |
-| sound2wem | по лицензии репозитория EternalLeo/sound2wem | сборка из исходников, subprocess | клонировать в Фазе 0, текст лицензии добавить сюда |
-| DeepFilterNet3 | по лицензии проекта | Python sidecar (Фаза 6) | — |
-| Python 3.11 + gRPC | PSF / Apache-2.0 | sidecar-процесс | — |
+| Компонент | Версия | Лицензия | Тип интеграции | Статус |
+|---|---|---|---|---|
+| `Qt` | 6.5.3 LTS (`C:\Qt\6.5.3\msvc2019_64`) | `LGPLv3` (open-source edition) | линковка ядра (Widgets) | подключено |
+| `SQLite` | 3.49.1 (amalgamation, [`third_party/sqlite`](../third_party/sqlite/sqlite3.h)) | Public Domain | линковка ядра (`SQLITE_ENABLE_FTS5`) | подключено |
+| `nlohmann::json` | 3.11.3 (single header, [`third_party/nlohmann`](../third_party/nlohmann/nlohmann/json.hpp)) | `MIT` | header-only в ядре | подключено |
+| `Catch2` | 3.7.1 (amalgamated, [`tests/third_party/catch2`](../tests/third_party/catch2/catch_amalgamated.hpp)) | `BSL-1.0` | только тесты | подключено |
+| `sound2wem` | v6 (2026-01-02, [`third_party/sound2wem/zSound2wem.cmd`](../third_party/sound2wem/zSound2wem.cmd)) | `MPL-2.0` (см. [`LICENSE`](../third_party/sound2wem/LICENSE)) | внешний `cmd`-скрипт, вызов как `subprocess`; НЕ линкуется | подключено |
+| `Wwise Authoring` | 2026.1.3.9276 (`C:\Audiokinetic\Wwise_2026.1.3.9276`) | Proprietary (Audiokinetic) | требуется для работы `sound2wem` (`WwiseConsole.exe`); в репо не входит | установлено локально |
+| `FFmpeg` | — (ставится `zSound2wem.cmd` автоматически при первом запуске) | `LGPL/GPL` в зависимости от сборки | внешний `CLI` внутри скрипта `sound2wem`, НЕ линкуется в ядро | ещё не устанавливался |
+| `RtAudio` | — | `MIT` | линковка ядра (Фаза 1) | запланировано |
+| `ASIO SDK` | 2.3.4 | Dual: Proprietary / `GPLv3` | внешний исходник, НЕ коммитить (уже в `ASIO-SDK_2.3.4_2025-10-15/ASIOSDK`) | запланировано (Фаза 1) |
+| `vgmstream` | — | `GPL` | внешний `CLI` через `subprocess`, в ядро НЕ линковать | запланировано (Фаза 3) |
+| `libsndfile` / `dr_wav` / `SoXR` / `RubberBand` / `Eigen` | — | `LGPL`/`MIT`/`GPL`(см. ниже) | линковка ядра — проверить каждую перед Фазой 1–2 | запланировано |
 
-> ⚠ RubberBand: GPL — допускаем только вызов как внешний CLI/отдельный процесс,
-> либо коммерческая лицензия. Решение зафиксировать до Фазы 2 в docs/plans/.
+Примечания:
+
+- `RubberBand` — `GPL` + коммерческая; для линковки в ядро потребуется коммерческая лицензия
+  либо замена (решение — перед Фазой 2, зафиксировать сюда).
+- `sound2wem` (вопреки ожиданию PLAN.md п.7 «собирается из исходников») — это готовый
+  `cmd`-скрипт-обёртка над `WwiseConsole.exe` + `FFmpeg`, а не компилируемый кодер:
+  собирать `sound2wem.exe` не из чего, см. [`docs/wem_params.md`](wem_params.md).

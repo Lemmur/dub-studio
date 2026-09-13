@@ -1,22 +1,17 @@
-# GUI RuDub Studio (Widgets, тёмная тема, интерфейс только на русском)
-qt_add_executable(rudub WIN32
-  main.cpp
-)
-target_link_libraries(rudub PRIVATE
-  rudub_project
-  rudub_audio
-  rudub_text
-  Qt6::Widgets
-  Qt6::Sql
-  Qt6::Network
+# UI-слой: MainWindow + модели таблиц (Qt Widgets).
+
+add_library(dubstudio_ui STATIC
+  mainwindow.cpp
+  linesmodel.cpp
 )
 
-# Консольная проверка среды: версии Qt/компилятора, драйверы SQL, плагины
-qt_add_executable(rudub_env_check
-  env_check.cpp
+target_include_directories(dubstudio_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
+target_link_libraries(dubstudio_ui
+  PUBLIC
+    Qt6::Widgets
+    dubstudio_core
 )
-target_link_libraries(rudub_env_check PRIVATE
-  rudub_project
-  Qt6::Core
-  Qt6::Sql
-)
+
+add_executable(DubStudio WIN32 main.cpp)
+target_link_libraries(DubStudio PRIVATE dubstudio_ui)

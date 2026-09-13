@@ -1,5 +1,5 @@
--- Схема БД проекта lines.db (PLAN.md, раздел 5.1).
--- Применять при создании/открытии проекта; все CREATE IF NOT EXISTS — идемпотентно.
+-- DubStudio — схема БД проекта (PLAN.md, раздел 5.1).
+-- Применяется классом dubstudio::Database при каждом открытии (идемпотентно).
 
 PRAGMA journal_mode=WAL;
 PRAGMA synchronous=NORMAL;
@@ -31,10 +31,10 @@ CREATE TABLE IF NOT EXISTS lines (
     CHECK(status IN ('todo','recorded','in_review','done')),
   created_at INTEGER DEFAULT (strftime('%s','now'))
 );
-CREATE INDEX idx_lines_file ON lines(file_id);
-CREATE INDEX idx_lines_quest ON lines(quest_id);
-CREATE INDEX idx_lines_speaker ON lines(speaker_name);
-CREATE INDEX idx_lines_status ON lines(status);
+CREATE INDEX IF NOT EXISTS idx_lines_file ON lines(file_id);
+CREATE INDEX IF NOT EXISTS idx_lines_quest ON lines(quest_id);
+CREATE INDEX IF NOT EXISTS idx_lines_speaker ON lines(speaker_name);
+CREATE INDEX IF NOT EXISTS idx_lines_status ON lines(status);
 
 CREATE TABLE IF NOT EXISTS texts (
   wem_hash TEXT PRIMARY KEY REFERENCES lines(wem_hash),
@@ -88,7 +88,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   progress_pct INTEGER DEFAULT 0,
   log TEXT DEFAULT ''
 );
-CREATE INDEX idx_jobs_status ON jobs(status);
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 
 CREATE TABLE IF NOT EXISTS undo_log (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
