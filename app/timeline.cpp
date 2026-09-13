@@ -31,12 +31,12 @@ QString formatTime(double seconds, bool ms) {
 
 TimelineWidget::TimelineWidget(QWidget* parent) : QWidget(parent) {
     setMouseTracking(false);
-    setMinimumHeight(kRulerH + kRowH * (2 + kMinRowH));
+    setMinimumHeight(kRulerH + (kRowH + kMiniRulerH) * (2 + kMinRowH));
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 }
 
 QSize TimelineWidget::minimumSizeHint() const {
-    return QSize(600, kRulerH + kRowH * 4);
+    return QSize(600, kRulerH + (kRowH + kMiniRulerH) * 4);
 }
 
 void TimelineWidget::buildRows() {
@@ -96,9 +96,9 @@ void TimelineWidget::syncTracks() {
     // Выделение могло выйти за пределы (undo split/загрузка сессии).
     if (store_ && selected_ >= static_cast<int>(store_->takes().size())) selected_ = -1;
     if (!store_) selected_ = -1;
-    // Фиксированная высота = все дорожки: вертикальный скролл даёт
-    // обёртка QScrollArea (MainWindow::buildUi), виджет не обрезается.
-    setMinimumHeight(kRulerH + static_cast<int>(rows_.size()) * kRowH);
+    // Фиксированная высота = все дорожки (с мини-линейками): вертикальный
+    // скролл даёт обёртка QScrollArea (MainWindow::buildUi).
+    setMinimumHeight(kRulerH + static_cast<int>(rows_.size()) * rowStride());
     clampView();
     update();
     updateGeometry();
@@ -180,13 +180,27 @@ bool TimelineWidget::hasRange(std::uint64_t& from, std::uint64_t& to) const {
     return true;
 }
 
+void TimelineWidget::setCursorAt(double x) {
+    cursorSample_ = anchorSample_ = sampleAtX(x);
+    update();
+    emit infoChanged(QStringLiteral("Курсор: сэмпл %1").arg(cursorSample_));
+}
+
 void TimelineWidget::mousePressEvent(QMouseEvent* event) {
-    if (event->button() != Qt::LeftButton) return;
     const double x = static_cast<double>(event->position().x());
     const double y = static_cast<double>(event->position().y());
 
-    // Shift+клик ГДЕ УГОДНО (в т.ч. по линейке): конец диапазона.
-    // Проверяем до линейки: иначе Shift+клик по линейке схлопывал якорь.
+    // Панорама: средняя кнопка или Alt+ЛКМ в любом месте полотна.
+    if (event->button() == Qt::MiddleButton ||
+        (event->button() == Qt::LeftButton && (event->modifiers() & Qt::AltModifier))) {
+        dragging_ = true;
+        dragLastX_ = static_cast<int>(x);
+        setCursor(Qt::ClosedHandCursor);
+        return;
+    }
+    if (event->button() != Qt::LeftButton) return;
+
+    // Shift+клик ГДЕ УГОДНО: конец диапазона (курсор двигается, анкер стоит).
     if (event->modifiers() & Qt::ShiftModifier) {
         cursorSample_ = sampleAtX(x);
         update();
@@ -200,11 +214,11 @@ void TimelineWidget::mousePressEvent(QMouseEvent* event) {
         return;
     }
 
-    // Линейка: установка курсора (диапазон схлопывается).
-    if (y < kRulerH) {
-        cursorSample_ = anchorSample_ = sampleAtX(x);
-        update();
-        emit infoChanged(QStringLiteral("Курсор: сэмпл %1").arg(cursorSample_));
+    // Верхняя линейка ИЛИ мини-линейка над дорожкой: установка курсора.
+    // Мини-линейки прямо у волны — не надо тянуться к самому верху окна.
+    if (y < kRulerH || inMiniRuler(static_cast<int>(y))) {
+        setCursorAt(x);
+        draggingCursor_ = true; // зажатой кнопкой можно довести точно
         return;
     }
 
@@ -221,17 +235,21 @@ void TimelineWidget::mousePressEvent(QMouseEvent* event) {
         return;
     }
 
-    // Пустое место: панорама (как в Фазе 1) + сброс диапазона.
+    // Пустое место дорожки: КУРСОР (как в Audacity/Cubase), не панорама.
     if (x > kHeaderW) {
-        dragging_ = true;
-        dragLastX_ = static_cast<int>(x);
-        setCursor(Qt::ClosedHandCursor);
-        anchorSample_ = cursorSample_; // схлопнуть без сдвига курсора
+        setCursorAt(x);
+        draggingCursor_ = true;
     }
 }
 
 void TimelineWidget::mouseMoveEvent(QMouseEvent* event) {
     const double x = static_cast<double>(event->position().x());
+    // Тянем курсор зажатой ЛКМ: точная доводка прямо по волне.
+    if (draggingCursor_ && !movingClip_) {
+        cursorSample_ = sampleAtX(x);
+        update();
+        return;
+    }
     if (movingClip_ && selected_ >= 0 && store_ &&
         selected_ < static_cast<int>(store_->takes().size())) {
         // Живой preview: сэмплы не трогаем, двигаем только позицию клипа.
@@ -255,7 +273,7 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* event) {
 }
 
 void TimelineWidget::mouseReleaseEvent(QMouseEvent* event) {
-    if (event->button() != Qt::LeftButton) return;
+    if (event->button() != Qt::LeftButton && event->button() != Qt::MiddleButton) return;
     if (movingClip_) {
         movingClip_ = false;
         setCursor(Qt::ArrowCursor);
@@ -265,6 +283,7 @@ void TimelineWidget::mouseReleaseEvent(QMouseEvent* event) {
         }
         return;
     }
+    draggingCursor_ = false;
     dragging_ = false;
     setCursor(Qt::ArrowCursor);
 }
@@ -290,7 +309,7 @@ void TimelineWidget::mouseDoubleClickEvent(QMouseEvent* event) {
 }
 
 int TimelineWidget::rowAt(int y) const {
-    const int idx = (y - kRulerH) / kRowH;
+    const int idx = (y - kRulerH) / rowStride();
     if (idx < 0 || idx >= static_cast<int>(rows_.size())) return -1;
     return idx;
 }
@@ -357,12 +376,16 @@ void TimelineWidget::paintEvent(QPaintEvent*) {
     p.setPen(QColor(0x55, 0x55, 0x55));
     p.drawLine(0, kRulerH - 1, width(), kRulerH - 1);
 
-    // --- Строки треков ---
+    // --- Строки треков (над каждой — мини-линейка с маркером курсора) ---
     const int nRows = static_cast<int>(rows_.size());
     std::vector<float> mins, maxs;
+    const double cursorX =
+        kHeaderW + (static_cast<double>(cursorSample_) - static_cast<double>(viewStart_)) /
+                       samplesPerPixel_;
     for (int r = 0; r < nRows; ++r) {
         const Row& row = rows_[static_cast<std::size_t>(r)];
-        const int y0 = kRulerH + r * kRowH;
+        const int mtop = miniTop(r);
+        const int y0 = rowTop(r);
         const bool isSelected = selected_ == row.clipIndex && row.clipIndex >= 0;
 
         // Хедер трека.
@@ -465,6 +488,25 @@ void TimelineWidget::paintEvent(QPaintEvent*) {
                            : QStringLiteral("— сюда попадёт финал после обработки —"));
         }
 
+        // Мини-линейка над дорожкой: близко к волне, удобно точно ставить курсор.
+        p.fillRect(kHeaderW, mtop, waveW, kMiniRulerH, QColor(0x23, 0x23, 0x23));
+        p.fillRect(0, mtop, kHeaderW, kMiniRulerH, QColor(0x2b, 0x2b, 0x2b));
+        p.setPen(QColor(0x55, 0x55, 0x55));
+        for (double t = std::floor(startSec / step) * step; t <= endSec; t += step) {
+            const int mx = kHeaderW + static_cast<int>((t - startSec) / secondsVisible * waveW);
+            p.drawLine(mx, mtop + kMiniRulerH - 3, mx, mtop + kMiniRulerH - 1);
+        }
+        // Маркер курсора — жёлтый треугольник вниз.
+        if (cursorX >= kHeaderW && cursorX <= width()) {
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(0xff, 0xd7, 0x60));
+            const int cx = static_cast<int>(cursorX);
+            QPolygon tri;
+            tri << QPoint(cx - 4, mtop) << QPoint(cx + 4, mtop) << QPoint(cx, mtop + 5);
+            p.drawPolygon(tri);
+            p.setBrush(Qt::NoBrush);
+        }
+
         // Разделитель строк.
         p.setPen(QColor(0x33, 0x33, 0x33));
         p.drawLine(0, y0 + kRowH - 1, width(), y0 + kRowH - 1);
@@ -490,13 +532,20 @@ void TimelineWidget::paintEvent(QPaintEvent*) {
         }
     }
 
-    // --- Курсор редактирования (пунктир) ---
-    const double curX = kHeaderW +
-        (static_cast<double>(cursorSample_) - static_cast<double>(viewStart_)) / samplesPerPixel_;
-    if (curX >= kHeaderW && curX <= width()) {
-        QPen dash(QColor(0xe8, 0xe8, 0xe8), 1, Qt::DashLine);
+    // --- Курсор редактирования (жёлтый пунктир через все дорожки) ---
+    if (cursorX >= kHeaderW && cursorX <= width()) {
+        QPen dash(QColor(0xff, 0xd7, 0x60), 1, Qt::DashLine);
         p.setPen(dash);
-        p.drawLine(static_cast<int>(curX), 0, static_cast<int>(curX), height());
+        p.drawLine(static_cast<int>(cursorX), 0, static_cast<int>(cursorX), height());
+        // Маркер и на верхней линейке.
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(0xff, 0xd7, 0x60));
+        QPolygon tri;
+        tri << QPoint(static_cast<int>(cursorX) - 4, 0)
+            << QPoint(static_cast<int>(cursorX) + 4, 0)
+            << QPoint(static_cast<int>(cursorX), 5);
+        p.drawPolygon(tri);
+        p.setBrush(Qt::NoBrush);
     }
 
     // --- Playhead ---

@@ -86,8 +86,9 @@ private:
     double samplesPerPixel_ = 512.0; // zoom: от full-view до 1/64 сэмпла на пиксель
     std::uint64_t viewStart_ = 0;    // первый видимый сэмпл
 
-    bool dragging_ = false;  // панорама пустым местом
+    bool dragging_ = false;   // панорама (СКМ или Alt+ЛКМ)
     int dragLastX_ = 0;
+    bool draggingCursor_ = false; // тянем курсор зажатой ЛКМ (точная установка)
 
     // Фаза 2
     int selected_ = -1;              // выбранный клип (индекс ClipStore)
@@ -100,6 +101,14 @@ private:
     static constexpr int kHeaderW = 150;
     static constexpr int kRowH = 64;
     static constexpr int kRulerH = 22;
+    static constexpr int kMiniRulerH = 10; // мини-линейка над КАЖДОЙ дорожкой
+    int rowStride() const { return kRowH + kMiniRulerH; }
+    int rowTop(int r) const { return kRulerH + kMiniRulerH + r * rowStride(); }
+    int miniTop(int r) const { return kRulerH + r * rowStride(); }
+    bool inMiniRuler(int y) const {
+        return y >= kRulerH && ((y - kRulerH) % rowStride()) < kMiniRulerH;
+    }
+    void setCursorAt(double x); // курсор = анкер (курсор редактирования)
 };
 
 } // namespace dubstudio
