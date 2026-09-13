@@ -660,7 +660,9 @@ void MainWindow::rebuildTree() {
         fileItem->setText(QStringLiteral("%1 (%2)").arg(fileId).arg(fileLines));
         treeModel_->appendRow(fileItem);
     }
-    tree_->expandAll();
+    // Дерево по умолчанию свёрнуто: 42 файла не раскрывают всё подряд,
+    // пользователь сам разворачивает нужный файл (первый запуск/импорт).
+    tree_->collapseAll();
 }
 
 void MainWindow::onTreeSelection() {
