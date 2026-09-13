@@ -333,6 +333,7 @@ void TimelineWidget::paintEvent(QPaintEvent*) {
         p.setPen(Qt::NoPen);
         p.setBrush(QColor((row.color >> 16) & 0xFF, (row.color >> 8) & 0xFF, row.color & 0xFF));
         p.drawRect(6, y0 + 6, 8, kRowH - 12);
+        p.setBrush(Qt::NoBrush); // дальше только контуры, иначе рамка клипа зальёт волну
         p.setPen(QColor(0xe0, 0xe0, 0xe0));
         QFont f = font();
         f.setPointSize(9);

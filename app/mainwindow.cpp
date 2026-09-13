@@ -55,6 +55,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <stdexcept>
 
 namespace dubstudio {
 namespace {
@@ -649,30 +650,54 @@ void MainWindow::finalizeTake() {
     const std::string hash = clip.wemHash;
     const auto durMs = static_cast<int>(clip.samples.size() * 1000.0 / clip.sampleRate);
     const std::string quality = clip.peakDb > -1.0 || clip.rmsDb < -50.0 ? "red" : "green";
-    const char* err = nullptr;
-    const char* sql =
-        "BEGIN;"
-        "INSERT INTO takes(take_id, wem_hash, file_cas, duration_ms, quality, rms_db, peak_db,"
-        " is_master_candidate, comment) VALUES(?1,?2,?3,?4,?5,?6,?7,0,'Фаза 1: запись');"
-        "INSERT INTO undo_log(action) VALUES('take.record:' || ?1);"
-        "UPDATE lines SET status='recorded' WHERE wem_hash=?2;"
-        "COMMIT;";
-    sqlite3_stmt* stmt = nullptr;
-    if (sqlite3_prepare_v2(db_->handle(), sql, -1, &stmt, nullptr) == SQLITE_OK) {
-        sqlite3_bind_text(stmt, 1, takeId.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(stmt, 2, hash.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(stmt, 3, clip.filePath.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_int(stmt, 4, durMs);
-        sqlite3_bind_text(stmt, 5, quality.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_double(stmt, 6, clip.rmsDb);
-        sqlite3_bind_double(stmt, 7, clip.peakDb);
-        sqlite3_step(stmt);
-        sqlite3_finalize(stmt);
-    } else {
-        err = sqlite3_errmsg(db_->handle());
+    // ВАЖНО: sqlite3_prepare_v2 компилирует только ПЕРВОЕ выражение многострочного
+    // SQL — «BEGIN;…;COMMIT;» одним prepare оставлял транзакцию открытой навсегда
+    // (ломая все последующие BEGIN, в т.ч. команды правок Фазы 2). Поэтому
+    // BEGIN/COMMIT отдельно через exec, выражения — по одному prepare.
+    QString err;
+    sqlite3* h = db_->handle();
+    db_->exec("BEGIN");
+    try {
+        auto runStep = [&](const char* sql, auto bind) {
+            sqlite3_stmt* st = nullptr;
+            if (sqlite3_prepare_v2(h, sql, -1, &st, nullptr) != SQLITE_OK) {
+                throw std::runtime_error(sqlite3_errmsg(h));
+            }
+            bind(st);
+            if (sqlite3_step(st) != SQLITE_DONE) {
+                const std::string msg = sqlite3_errmsg(h);
+                sqlite3_finalize(st);
+                throw std::runtime_error(msg);
+            }
+            sqlite3_finalize(st);
+        };
+        runStep("INSERT INTO takes(take_id, wem_hash, file_cas, duration_ms, quality,"
+                " rms_db, peak_db, is_master_candidate, comment)"
+                " VALUES(?1,?2,?3,?4,?5,?6,?7,0,'Фаза 1: запись');",
+                [&](sqlite3_stmt* st) {
+                    sqlite3_bind_text(st, 1, takeId.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_text(st, 2, hash.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_text(st, 3, clip.filePath.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_int(st, 4, durMs);
+                    sqlite3_bind_text(st, 5, quality.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_double(st, 6, clip.rmsDb);
+                    sqlite3_bind_double(st, 7, clip.peakDb);
+                });
+        runStep("INSERT INTO undo_log(action, scope) VALUES('take.record:' || ?1, 'take');",
+                [&](sqlite3_stmt* st) {
+                    sqlite3_bind_text(st, 1, takeId.c_str(), -1, SQLITE_TRANSIENT);
+                });
+        runStep("UPDATE lines SET status='recorded' WHERE wem_hash=?1;",
+                [&](sqlite3_stmt* st) {
+                    sqlite3_bind_text(st, 1, hash.c_str(), -1, SQLITE_TRANSIENT);
+                });
+        db_->exec("COMMIT");
+    } catch (const std::exception& e) {
+        try { db_->exec("ROLLBACK"); } catch (...) {}
+        err = QString::fromUtf8(e.what());
     }
-    if (err) {
-        QMessageBox::warning(this, QStringLiteral("Ошибка БД"), QString::fromUtf8(err));
+    if (!err.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("Ошибка БД"), err);
     }
 
     liveTakeIndex_ = -1;
