@@ -165,15 +165,8 @@ void TimelineWidget::mousePressEvent(QMouseEvent* event) {
     const double x = static_cast<double>(event->position().x());
     const double y = static_cast<double>(event->position().y());
 
-    // Линейка: установка курсора (диапазон схлопывается).
-    if (y < kRulerH) {
-        cursorSample_ = anchorSample_ = sampleAtX(x);
-        update();
-        emit infoChanged(QStringLiteral("Курсор: сэмпл %1").arg(cursorSample_));
-        return;
-    }
-
-    // Shift+клик: конец диапазона (курсор двигается, анкер стоит).
+    // Shift+клик ГДЕ УГОДНО (в т.ч. по линейке): конец диапазона.
+    // Проверяем до линейки: иначе Shift+клик по линейке схлопывал якорь.
     if (event->modifiers() & Qt::ShiftModifier) {
         cursorSample_ = sampleAtX(x);
         update();
@@ -184,6 +177,14 @@ void TimelineWidget::mousePressEvent(QMouseEvent* event) {
                                  .arg(t)
                                  .arg(t - f));
         }
+        return;
+    }
+
+    // Линейка: установка курсора (диапазон схлопывается).
+    if (y < kRulerH) {
+        cursorSample_ = anchorSample_ = sampleAtX(x);
+        update();
+        emit infoChanged(QStringLiteral("Курсор: сэмпл %1").arg(cursorSample_));
         return;
     }
 
@@ -250,10 +251,21 @@ void TimelineWidget::mouseReleaseEvent(QMouseEvent* event) {
 
 void TimelineWidget::mouseDoubleClickEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton) {
-        // Двойной клик: показать всё.
-        samplesPerPixel_ = contentSamples() / std::max(1.0, static_cast<double>(width() - kHeaderW));
+        // Вписать в окно КОНТЕНТ (край самого позднего клипа), а не канву-минимум
+        // 30 с: короткий тейк не должен занимать десятую часть окна.
+        double content = 0.0;
+        if (store_) {
+            for (const auto& c : store_->takes()) {
+                content = std::max<double>(
+                    content, static_cast<double>(c.startSample + c.samples.size()));
+            }
+        }
+        if (content <= 0.0) content = contentSamples(); // нет клипов — канва 30 с
+        const double w = std::max(1.0, static_cast<double>(width() - kHeaderW));
+        samplesPerPixel_ = std::clamp(content / w, 1.0 / 64.0, 4096.0);
         viewStart_ = 0;
         update();
+        emit infoChanged(QStringLiteral("Вписать: %1 сэмпл/пикс").arg(samplesPerPixel_, 0, 'f', 2));
     }
 }
 
@@ -270,14 +282,20 @@ std::uint64_t TimelineWidget::playheadSample() const {
 }
 
 void TimelineWidget::tick() {
-    // Автоскролл за playhead во время записи/плейбека.
-    const std::uint64_t ph = playheadSample();
-    const double x = (static_cast<double>(ph) - static_cast<double>(viewStart_)) / samplesPerPixel_;
-    const double w = static_cast<double>(width() - kHeaderW);
-    if (x > w - 40.0 || x < 0.0) {
-        viewStart_ = static_cast<std::uint64_t>(
-            std::max(0.0, static_cast<double>(ph) - w * 0.25));
-        clampView();
+    // Автоскролл за playhead ТОЛЬКО при активной записи/плейбеке.
+    // В покое вид должен стоять на месте: после стопа playhead=0, и автоскролл
+    // каждые 33 мс возвращал viewStart в 0 — вид «прыгал», а курсор/диапазон,
+    // выставленные по старым координатам, улетали за экран.
+    if (engine_ && (engine_->isRecording() || engine_->isPlaying())) {
+        const std::uint64_t ph = playheadSample();
+        const double x =
+            (static_cast<double>(ph) - static_cast<double>(viewStart_)) / samplesPerPixel_;
+        const double w = static_cast<double>(width() - kHeaderW);
+        if (x > w - 40.0 || x < 0.0) {
+            viewStart_ = static_cast<std::uint64_t>(
+                std::max(0.0, static_cast<double>(ph) - w * 0.25));
+            clampView();
+        }
     }
     update();
 }
