@@ -33,6 +33,8 @@ public:
 
 private:
     void applySchema();
+    // Фаза 2: добавить scope/take_id/state_json в undo_log существующих БД.
+    void migrateUndoLog();
 
     sqlite3* db_ = nullptr;
 };

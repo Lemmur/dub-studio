@@ -94,5 +94,9 @@ CREATE TABLE IF NOT EXISTS undo_log (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
   created_at INTEGER DEFAULT (strftime('%s','now')),
   action TEXT NOT NULL,
-  undone INTEGER DEFAULT 0
+  undone INTEGER DEFAULT 0,
+  -- Фаза 2 (редактура): снапшот-команды, откат survives рестарт (PLAN.md 6.5).
+  scope TEXT DEFAULT '',      -- 'edit' — правка клипа (Command-паттерн)
+  take_id TEXT DEFAULT '',    -- затронутый тейк
+  state_json TEXT DEFAULT ''  -- состояние ПОСЛЕ команды: props клипа + wav-снапшот
 );

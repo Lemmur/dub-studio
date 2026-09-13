@@ -5,8 +5,10 @@
 #include "timeline.h"
 
 #include "dubstudio/audio_engine.h"
+#include "dubstudio/audio_ops.h"
 #include "dubstudio/clip_store.h"
 #include "dubstudio/database.h"
+#include "dubstudio/edit_stack.h"
 #include "dubstudio/importer.h"
 #include "dubstudio/wav_writer.h"
 
@@ -24,6 +26,7 @@
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
 #include <QKeySequence>
@@ -52,6 +55,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <stdexcept>
 
 namespace dubstudio {
 namespace {
@@ -101,22 +105,50 @@ void applyDarkTheme() {
     p.setColor(QPalette::HighlightedText, QColor(0xff, 0xff, 0xff));
     p.setColor(QPalette::Disabled, QPalette::Text, QColor(0x80, 0x80, 0x80));
     p.setColor(QPalette::Disabled, QPalette::ButtonText, QColor(0x80, 0x80, 0x80));
+    // QMenu красит неактивные пункты через WindowText: без явного цвета
+    // Windows рисует их «гравировкой» (белая тень под серым текстом).
+    p.setColor(QPalette::Disabled, QPalette::WindowText, QColor(0x78, 0x78, 0x78));
     p.setColor(QPalette::PlaceholderText, QColor(0x88, 0x88, 0x88));
     QApplication::setPalette(p);
 }
 
 MainWindow::MainWindow(const QString& dbPath, QWidget* parent) : QMainWindow(parent) {
     dbPath_ = dbPath;
+    myDubDir_ = QStringLiteral("MyDub"); // PLAN.md 12: рабочая директория
     db_ = std::make_unique<Database>(dbPath_.toStdString());
 
     engine_ = std::make_unique<AudioEngine>();
     store_ = std::make_unique<ClipStore>();
+    edits_ = std::make_unique<EditStack>(*db_, *store_, myDubDir_.toStdString());
 
     buildUi();
     buildMenu();
     buildTransport();
     rebuildTree();
     reloadStats();
+
+    // Фаза 2: восстановление сессии тейков после рестарта (PLAN.md 6.5) —
+    // состояние каждого тейка = последний неотменённый шаг undo_log.
+    const EditStack::SessionInfo session = edits_->loadSession();
+    takeCounter_ = session.maxTakeNum;
+    timeline_->syncTracks();
+    connect(timeline_, &TimelineWidget::clipMoved, this, &MainWindow::onClipMoved);
+    connect(timeline_, &TimelineWidget::clipDeleteRequested, this, &MainWindow::onDeleteTake);
+    connect(timeline_, &TimelineWidget::rangeContextMenuRequested, this,
+            &MainWindow::onRangeContextMenu);
+    if (session.takes > 0) {
+        statusBar()->showMessage(
+            QStringLiteral("Сессия восстановлена: тейков %1").arg(session.takes), 6000);
+    }
+    updateUndoStatus();
+
+    // Автосейв: быстрый снапшот WAL + manifest.json (PLAN.md 6.5).
+    lastAutosave_ = QDateTime::currentDateTime();
+    autosaveTimer_ = new QTimer(this);
+    autosaveTimer_->setInterval(15000); // проверка условия каждые 15 с
+    connect(autosaveTimer_, &QTimer::timeout, this, &MainWindow::onAutosaveTick);
+    autosaveTimer_->start();
+    autosaveLabel_->setText(QStringLiteral("Автосейв: —"));
 
     // Попытка автооткрытия аудио (последнее выбранное или первый ASIO).
     QSettings s;
@@ -143,6 +175,12 @@ MainWindow::MainWindow(const QString& dbPath, QWidget* parent) : QMainWindow(par
         }
     }
 
+    // Раскладка интерфейса между запусками: геометрия окна + положение/размеры
+    // доков и тулбаров (objectName доков уже заданы — scenesDock/timelineDock).
+    QSettings geo;
+    restoreGeometry(geo.value(QStringLiteral("ui/geometry")).toByteArray());
+    restoreState(geo.value(QStringLiteral("ui/windowState")).toByteArray());
+
     tickTimer_ = new QTimer(this);
     tickTimer_->setInterval(33); // ~30 Гц: метры/playhead/живая волноформа
     connect(tickTimer_, &QTimer::timeout, this, &MainWindow::onTick);
@@ -151,8 +189,15 @@ MainWindow::MainWindow(const QString& dbPath, QWidget* parent) : QMainWindow(par
 
 MainWindow::~MainWindow() = default;
 
+void MainWindow::closeEvent(QCloseEvent* event) {
+    QSettings s;
+    s.setValue(QStringLiteral("ui/geometry"), saveGeometry());
+    s.setValue(QStringLiteral("ui/windowState"), saveState());
+    QMainWindow::closeEvent(event);
+}
+
 void MainWindow::buildUi() {
-    setWindowTitle(QStringLiteral("DubStudio — Фаза 1 (аудио)"));
+    setWindowTitle(QStringLiteral("DubStudio — Фаза 2 (редактура)"));
     resize(1500, 900);
 
     // --- Левый док: дерево файл -> сцена ---
@@ -209,6 +254,8 @@ void MainWindow::buildUi() {
     layout->addWidget(table_, 1);
     setCentralWidget(central);
 
+    connectTableSelection();
+
     connect(search_, &QLineEdit::textChanged, this, &MainWindow::onSearchChanged);
 
     // --- Нижний док: таймлайн Track 0/1/N (Фаза 1) ---
@@ -243,12 +290,20 @@ void MainWindow::buildUi() {
     dbLabel_ = new QLabel(this);
     dbLabel_->setStyleSheet(QStringLiteral("color:#7a7a7a; padding:0 4px;"));
     statusBar()->addWidget(statsLabel_, 1);
-    statusBar()->addWidget(new StatusSeparator(this));
     statusBar()->addWidget(recTimeLabel_);
     statusBar()->addWidget(new StatusSeparator(this));
     statusBar()->addWidget(xrunLabel_);
     statusBar()->addWidget(new StatusSeparator(this));
     statusBar()->addWidget(level_);
+    // Фаза 2: undo/redo и автосейв в статус-баре.
+    undoLabel_ = new QLabel(this);
+    undoLabel_->setStyleSheet(QStringLiteral("color:#a8b2c0; padding:0 4px;"));
+    statusBar()->addWidget(new StatusSeparator(this));
+    statusBar()->addWidget(undoLabel_);
+    autosaveLabel_ = new QLabel(this);
+    autosaveLabel_->setStyleSheet(QStringLiteral("color:#7a9a7a; padding:0 4px;"));
+    statusBar()->addPermanentWidget(autosaveLabel_);
+    statusBar()->addPermanentWidget(new StatusSeparator(this));
     statusBar()->addPermanentWidget(audioLabel_); // звук: устройство · Гц · буфер
     statusBar()->addPermanentWidget(new StatusSeparator(this));
     statusBar()->addPermanentWidget(dbLabel_);
@@ -307,6 +362,25 @@ void MainWindow::buildTransport() {
     QAction* audio = bar->addAction(QStringLiteral("Аудио…"));
     audio->setObjectName(QStringLiteral("actAudioSettings"));
     connect(audio, &QAction::triggered, this, &MainWindow::onAudioSettings);
+
+    // Фаза 2: операции дубляжа (PLAN.md 13: Record Loop Play Fit Ref Comp).
+    bar->addSeparator();
+    QAction* split = bar->addAction(QStringLiteral("✂ Разделить"));
+    split->setObjectName(QStringLiteral("actSplit"));
+    split->setShortcut(QKeySequence(QStringLiteral("S")));
+    split->setToolTip(QStringLiteral("Разделить выбранный клип по курсору (S)"));
+    connect(split, &QAction::triggered, this, &MainWindow::onSplit);
+
+    QAction* fit = bar->addAction(QStringLiteral("⇔ Fit Ref"));
+    fit->setObjectName(QStringLiteral("actFitRef"));
+    fit->setToolTip(
+        QStringLiteral("Растянуть тейк до длительности референса (питч сохраняется)"));
+    connect(fit, &QAction::triggered, this, &MainWindow::onFitToRef);
+
+    QAction* align = bar->addAction(QStringLiteral("⇤ Align"));
+    align->setObjectName(QStringLiteral("actAlign"));
+    align->setToolTip(QStringLiteral("Привязать начало клипа к началу референса"));
+    connect(align, &QAction::triggered, this, &MainWindow::onAlign);
 }
 
 void MainWindow::buildMenu() {
@@ -322,11 +396,19 @@ void MainWindow::buildMenu() {
     quit->setShortcut(QKeySequence::Quit);
     connect(quit, &QAction::triggered, this, &QWidget::close);
 
+    // Правка (Фаза 2, PLAN.md 6.4): undo/redo, trim/split/fade/…
+    buildEditMenuActions();
+
     // Аудио (Фаза 1)
     QMenu* audioMenu = menuBar()->addMenu(QStringLiteral("&Аудио"));
     QAction* settings = audioMenu->addAction(QStringLiteral("Настройки аудио…"));
     settings->setShortcut(QKeySequence(QStringLiteral("Ctrl+U")));
     connect(settings, &QAction::triggered, this, &MainWindow::onAudioSettings);
+
+    // Настройки: автосейв (Фаза 2, PLAN.md 6.5)
+    QMenu* optsMenu = menuBar()->addMenu(QStringLiteral("Н&астройки"));
+    QAction* project = optsMenu->addAction(QStringLiteral("Проект…"));
+    connect(project, &QAction::triggered, this, &MainWindow::onProjectSettings);
 
     // Вид
     QMenu* viewMenu = menuBar()->addMenu(QStringLiteral("&Вид"));
@@ -346,10 +428,13 @@ void MainWindow::buildMenu() {
     QAction* about = helpMenu->addAction(QStringLiteral("О программе"));
     connect(about, &QAction::triggered, this, [this] {
         QMessageBox::information(this, QStringLiteral("О программе"),
-            QStringLiteral("DubStudio — Фаза 1 (аудио).\n\n"
-                            "RtAudio + ASIO/WASAPI, запись моно 48 кГц/24-bit,\n"
+            QStringLiteral("DubStudio — Фаза 2 (редактура).\n\n"
+                            "Фаза 1: RtAudio + ASIO/WASAPI, запись моно 48 кГц/24-bit,\n"
                             "треки Track 0 REF-EN / MASTER-RU / TAKE-N,\n"
                             "волноформа с zoom, метроном, мониторинг.\n\n"
+                            "Фаза 2: trim/split/move/fade/crossfade/gain/normalize/\n"
+                            "silence/reverse, Fit to Ref (WSOLA, питч сохраняется),\n"
+                            "Align, Undo/Redo через рестарт, автосейв.\n\n"
                             "База: %1").arg(dbPath_));
     });
 }
@@ -516,8 +601,27 @@ void MainWindow::onRecord() {
     }
 
     ++takeCounter_;
+    // id тейка = "<wem_hash>_take_<N>" (полный хэш реплики): файл
+    // MyDub/takes/<wem_hash>_take_<N>.wav зеркалит именование игры
+    // "<GUID>_en.wem" и сразу видна принадлежность реплике.
+    // Гарантия уникальности: счётчик после рестарта берётся из БД, но строки
+    // могли остаться без WAV (MyDub удалён) — сверяемся с базой.
+    auto takeIdExists = [this](const QString& id) {
+        sqlite3_stmt* st = nullptr;
+        bool exists = false;
+        if (sqlite3_prepare_v2(db_->handle(), "SELECT 1 FROM takes WHERE take_id=?1;", -1,
+                               &st, nullptr) == SQLITE_OK) {
+            sqlite3_bind_text(st, 1, id.toUtf8().constData(), -1, SQLITE_TRANSIENT);
+            exists = sqlite3_step(st) == SQLITE_ROW;
+            sqlite3_finalize(st);
+        }
+        return exists;
+    };
+    while (takeIdExists(QStringLiteral("%1_take_%2").arg(hash).arg(takeCounter_))) {
+        ++takeCounter_;
+    }
     Clip clip;
-    clip.id = QStringLiteral("take_%1_%2").arg(takeCounter_).arg(hash.left(8)).toStdString();
+    clip.id = QStringLiteral("%1_take_%2").arg(hash).arg(takeCounter_).toStdString();
     clip.title = QStringLiteral("TAKE-%1").arg(takeCounter_, 2, 10, QLatin1Char('0')).toStdString();
     clip.wemHash = hash.toStdString();
     clip.sampleRate = engine_->sampleRate();
@@ -534,16 +638,24 @@ void MainWindow::onRecord() {
 
 void MainWindow::onPlay() {
     if (engine_->isRecording()) return;
-    const auto& takes = store_->takes();
-    if (takes.empty()) {
-        statusBar()->showMessage(QStringLiteral("Нет тейков для плейбека"), 3000);
+    // Микс ВИДИМЫХ клипов (фильтр по выбранной реплике): позиции/гейны/фейды.
+    std::vector<Clip> visible;
+    if (timeline_->lineFilterActive()) {
+        const std::string& filter = timeline_->lineFilter();
+        for (const auto& t : store_->takes()) {
+            if (t.wemHash == filter) visible.push_back(t);
+        }
+    }
+    const std::vector<float> mix = renderMix(visible);
+    if (mix.empty()) {
+        statusBar()->showMessage(
+            timeline_->lineFilterActive()
+                ? QStringLiteral("У этой реплики ещё нет тейков")
+                : QStringLiteral("Выберите реплику в таблице — плей играет её тейки"),
+            4000);
         return;
     }
-    // Играем последний тейк (живой индекс приоритетнее).
-    const std::size_t idx = liveTakeIndex_ >= 0 && liveTakeIndex_ < static_cast<int>(takes.size())
-                                ? static_cast<std::size_t>(liveTakeIndex_)
-                                : takes.size() - 1;
-    engine_->play(takes[idx].samples.data(), takes[idx].samples.size());
+    engine_->play(mix.data(), mix.size());
 }
 
 void MainWindow::onStop() {
@@ -585,35 +697,63 @@ void MainWindow::finalizeTake() {
     const std::string hash = clip.wemHash;
     const auto durMs = static_cast<int>(clip.samples.size() * 1000.0 / clip.sampleRate);
     const std::string quality = clip.peakDb > -1.0 || clip.rmsDb < -50.0 ? "red" : "green";
-    const char* err = nullptr;
-    const char* sql =
-        "BEGIN;"
-        "INSERT INTO takes(take_id, wem_hash, file_cas, duration_ms, quality, rms_db, peak_db,"
-        " is_master_candidate, comment) VALUES(?1,?2,?3,?4,?5,?6,?7,0,'Фаза 1: запись');"
-        "INSERT INTO undo_log(action) VALUES('take.record:' || ?1);"
-        "UPDATE lines SET status='recorded' WHERE wem_hash=?2;"
-        "COMMIT;";
-    sqlite3_stmt* stmt = nullptr;
-    if (sqlite3_prepare_v2(db_->handle(), sql, -1, &stmt, nullptr) == SQLITE_OK) {
-        sqlite3_bind_text(stmt, 1, takeId.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(stmt, 2, hash.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(stmt, 3, clip.filePath.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_int(stmt, 4, durMs);
-        sqlite3_bind_text(stmt, 5, quality.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_double(stmt, 6, clip.rmsDb);
-        sqlite3_bind_double(stmt, 7, clip.peakDb);
-        sqlite3_step(stmt);
-        sqlite3_finalize(stmt);
-    } else {
-        err = sqlite3_errmsg(db_->handle());
+    // ВАЖНО: sqlite3_prepare_v2 компилирует только ПЕРВОЕ выражение многострочного
+    // SQL — «BEGIN;…;COMMIT;» одним prepare оставлял транзакцию открытой навсегда
+    // (ломая все последующие BEGIN, в т.ч. команды правок Фазы 2). Поэтому
+    // BEGIN/COMMIT отдельно через exec, выражения — по одному prepare.
+    QString err;
+    sqlite3* h = db_->handle();
+    db_->exec("BEGIN");
+    try {
+        auto runStep = [&](const char* sql, auto bind) {
+            sqlite3_stmt* st = nullptr;
+            if (sqlite3_prepare_v2(h, sql, -1, &st, nullptr) != SQLITE_OK) {
+                throw std::runtime_error(sqlite3_errmsg(h));
+            }
+            bind(st);
+            if (sqlite3_step(st) != SQLITE_DONE) {
+                const std::string msg = sqlite3_errmsg(h);
+                sqlite3_finalize(st);
+                throw std::runtime_error(msg);
+            }
+            sqlite3_finalize(st);
+        };
+        runStep("INSERT INTO takes(take_id, wem_hash, file_cas, duration_ms, quality,"
+                " rms_db, peak_db, is_master_candidate, comment)"
+                " VALUES(?1,?2,?3,?4,?5,?6,?7,0,'Фаза 1: запись');",
+                [&](sqlite3_stmt* st) {
+                    sqlite3_bind_text(st, 1, takeId.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_text(st, 2, hash.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_text(st, 3, clip.filePath.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_int(st, 4, durMs);
+                    sqlite3_bind_text(st, 5, quality.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_double(st, 6, clip.rmsDb);
+                    sqlite3_bind_double(st, 7, clip.peakDb);
+                });
+        runStep("INSERT INTO undo_log(action, scope) VALUES('take.record:' || ?1, 'take');",
+                [&](sqlite3_stmt* st) {
+                    sqlite3_bind_text(st, 1, takeId.c_str(), -1, SQLITE_TRANSIENT);
+                });
+        runStep("UPDATE lines SET status='recorded' WHERE wem_hash=?1;",
+                [&](sqlite3_stmt* st) {
+                    sqlite3_bind_text(st, 1, hash.c_str(), -1, SQLITE_TRANSIENT);
+                });
+        db_->exec("COMMIT");
+    } catch (const std::exception& e) {
+        try { db_->exec("ROLLBACK"); } catch (...) {}
+        err = QString::fromUtf8(e.what());
     }
-    if (err) {
-        QMessageBox::warning(this, QStringLiteral("Ошибка БД"), QString::fromUtf8(err));
+    if (!err.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("Ошибка БД"), err);
     }
 
     liveTakeIndex_ = -1;
     timeline_->syncTracks();
+    // Выделение строки реплики переживает refresh (мы продолжаем с ней работать).
+    const QString keepHash = currentWemHash();
     model_->refresh();
+    restoreTableSelection(keepHash);
+    markDirty(); // автосейв: появилась запись
     recTimeLabel_->setText(QString());
     statusBar()->showMessage(
         QStringLiteral("Тейк записан: %1 мс, RMS %2 dB, Peak %3 dB, xrun %4")
@@ -649,6 +789,512 @@ void MainWindow::onTick() {
     timeline_->tick();
 }
 
+// --- Фаза 2: редактура (PLAN.md 6.4, 6.5) --------------------------------------
+
+void MainWindow::buildEditMenuActions() {
+    QMenu* m = menuBar()->addMenu(QStringLiteral("&Правка"));
+
+    QAction* undo = m->addAction(QStringLiteral("Отменить"));
+    undo->setObjectName(QStringLiteral("actUndo"));
+    undo->setShortcut(QKeySequence::Undo); // Ctrl+Z
+    connect(undo, &QAction::triggered, this, &MainWindow::onUndo);
+
+    QAction* redo = m->addAction(QStringLiteral("Повторить"));
+    redo->setObjectName(QStringLiteral("actRedo"));
+    redo->setShortcut(QKeySequence::Redo); // Ctrl+Y
+    connect(redo, &QAction::triggered, this, &MainWindow::onRedo);
+
+    m->addSeparator();
+
+    QAction* split = m->addAction(QStringLiteral("Разделить по курсору"));
+    split->setObjectName(QStringLiteral("actEditSplit"));
+    // S уже назначен на тулбарной кнопке — дублировать не нужно.
+    connect(split, &QAction::triggered, this, &MainWindow::onSplit);
+
+    QAction* trimSil = m->addAction(QStringLiteral("Трим тишины по краям (−50 dBFS)"));
+    trimSil->setObjectName(QStringLiteral("actTrimSilence"));
+    connect(trimSil, &QAction::triggered, this, &MainWindow::onTrimSilence);
+
+    QAction* trimRange = m->addAction(QStringLiteral("Обрезать вне диапазона"));
+    trimRange->setObjectName(QStringLiteral("actTrimRange"));
+    connect(trimRange, &QAction::triggered, this, &MainWindow::onTrimRange);
+
+    QAction* silence = m->addAction(QStringLiteral("Тишина (диапазон или весь клип)"));
+    silence->setObjectName(QStringLiteral("actSilence"));
+    connect(silence, &QAction::triggered, this, &MainWindow::onSilence);
+
+    QAction* reverse = m->addAction(QStringLiteral("Реверс (диапазон или весь клип)"));
+    reverse->setObjectName(QStringLiteral("actReverse"));
+    connect(reverse, &QAction::triggered, this, &MainWindow::onReverseRange);
+
+    m->addSeparator();
+
+    QAction* normalize = m->addAction(QStringLiteral("Нормализовать…"));
+    normalize->setObjectName(QStringLiteral("actNormalize"));
+    connect(normalize, &QAction::triggered, this, &MainWindow::onNormalize);
+
+    QAction* gain = m->addAction(QStringLiteral("Усиление…"));
+    gain->setObjectName(QStringLiteral("actGain"));
+    connect(gain, &QAction::triggered, this, &MainWindow::onGain);
+
+    QAction* fadeIn = m->addAction(QStringLiteral("Фейд-ин до курсора"));
+    fadeIn->setObjectName(QStringLiteral("actFadeIn"));
+    connect(fadeIn, &QAction::triggered, this, &MainWindow::onFadeIn);
+
+    QAction* fadeOut = m->addAction(QStringLiteral("Фейд-аут от курсора"));
+    fadeOut->setObjectName(QStringLiteral("actFadeOut"));
+    connect(fadeOut, &QAction::triggered, this, &MainWindow::onFadeOut);
+
+    QAction* crossfade = m->addAction(QStringLiteral("Кроссфейд с перекрывающимся клипом"));
+    crossfade->setObjectName(QStringLiteral("actCrossfade"));
+    connect(crossfade, &QAction::triggered, this, &MainWindow::onCrossfade);
+
+    m->addSeparator();
+
+    QAction* fit = m->addAction(QStringLiteral("Fit to Ref — под длительность референса"));
+    fit->setObjectName(QStringLiteral("actFitRefMenu"));
+    connect(fit, &QAction::triggered, this, &MainWindow::onFitToRef);
+
+    QAction* align = m->addAction(QStringLiteral("Выровнять по началу референса"));
+    align->setObjectName(QStringLiteral("actAlignMenu"));
+    connect(align, &QAction::triggered, this, &MainWindow::onAlign);
+
+    // Доступность пунктов обновляется при открытии меню.
+    connect(m, &QMenu::aboutToShow, this, &MainWindow::onEditMenuAboutToShow);
+}
+
+void MainWindow::onEditMenuAboutToShow() {
+    const bool haveClip = !selectedTakeId().isEmpty();
+    const bool haveRange = [this] {
+        std::uint64_t f, t;
+        return timeline_->hasRange(f, t);
+    }();
+    auto setEnabled = [this](const char* name, bool on) {
+        if (auto* a = findChild<QAction*>(name)) a->setEnabled(on);
+    };
+    setEnabled("actUndo", edits_->canUndo());
+    setEnabled("actRedo", edits_->canRedo());
+    setEnabled("actEditSplit", haveClip);
+    setEnabled("actTrimSilence", haveClip);
+    setEnabled("actTrimRange", haveClip && haveRange);
+    setEnabled("actSilence", haveClip);
+    setEnabled("actReverse", haveClip);
+    setEnabled("actNormalize", haveClip);
+    setEnabled("actGain", haveClip);
+    setEnabled("actFadeIn", haveClip);
+    setEnabled("actFadeOut", haveClip);
+    setEnabled("actCrossfade", false); // уточняется ниже
+    setEnabled("actFitRefMenu", haveClip);
+    setEnabled("actAlignMenu", haveClip);
+
+    // Человеческие имена команд для «Отменить/Повторить: …».
+    auto editName = [](const std::string& a) -> QString {
+        static const struct { const char* key; const char* ru; } kNames[] = {
+            {"edit.trim_silence", "трим тишины"}, {"edit.trim_range", "обрезка диапазона"},
+            {"edit.split", "разделение"},         {"edit.move", "перемещение"},
+            {"edit.align", "выравнивание"},       {"edit.gain", "усиление"},
+            {"edit.normalize", "нормализация"},   {"edit.silence", "тишина"},
+            {"edit.reverse", "реверс"},           {"edit.fade_in", "фейд-ин"},
+            {"edit.fade_out", "фейд-аут"},        {"edit.crossfade", "кроссфейд"},
+            {"edit.fit_ref", "Fit to Ref"},       {"edit.delete", "удаление тейка"},
+        };
+        for (const auto& n : kNames)
+            if (a == n.key) return QString::fromUtf8(n.ru);
+        return QString();
+    };
+    if (auto* undo = findChild<QAction*>("actUndo")) {
+        const std::string a = edits_->nextUndoAction();
+        const QString ru = editName(a);
+        undo->setText(ru.isEmpty() ? QStringLiteral("Отменить")
+                                   : QStringLiteral("Отменить: %1").arg(ru));
+    }
+    if (auto* redo = findChild<QAction*>("actRedo")) {
+        const std::string a = edits_->nextRedoAction();
+        const QString ru = editName(a);
+        redo->setText(ru.isEmpty() ? QStringLiteral("Повторить")
+                                   : QStringLiteral("Повторить: %1").arg(ru));
+    }
+    // Кроссфейд: нужен перекрывающийся сосед у выбранного клипа.
+    if (auto* cf = findChild<QAction*>("actCrossfade")) {
+        cf->setEnabled(crossfadeNeighbor() != nullptr);
+    }
+}
+
+QString MainWindow::selectedTakeId() const {
+    const int idx = timeline_->selectedClip();
+    if (!store_ || idx < 0 || idx >= static_cast<int>(store_->takes().size())) return {};
+    return QString::fromStdString(store_->takes()[static_cast<std::size_t>(idx)].id);
+}
+
+const Clip* MainWindow::crossfadeNeighbor() {
+    const int idx = timeline_->selectedClip();
+    if (!store_ || idx < 0 || idx >= static_cast<int>(store_->takes().size())) return nullptr;
+    const Clip& a = store_->takes()[static_cast<std::size_t>(idx)];
+    const Clip* best = nullptr;
+    std::uint64_t bestGap = 0;
+    for (std::size_t i = 0; i < store_->takes().size(); ++i) {
+        if (static_cast<int>(i) == idx) continue;
+        const Clip& b = store_->takes()[i];
+        const std::uint64_t o0 = std::max(a.startSample, b.startSample);
+        const std::uint64_t o1 = std::min(a.startSample + a.samples.size(),
+                                          b.startSample + b.samples.size());
+        if (o1 > o0) {
+            const std::uint64_t gap = b.startSample > a.startSample
+                                          ? b.startSample - a.startSample
+                                          : a.startSample - b.startSample;
+            if (!best || gap < bestGap) {
+                best = &b;
+                bestGap = gap;
+            }
+        }
+    }
+    return best;
+}
+
+bool MainWindow::applyEdit(const EditCommand& cmd) {
+    try {
+        edits_->apply(cmd);
+    } catch (const std::exception& e) {
+        QMessageBox::warning(this, QStringLiteral("Правка"), QString::fromUtf8(e.what()));
+        return false;
+    }
+    timeline_->syncTracks();
+    refreshTableKeepingSelection(); // статус реплики мог измениться
+    updateUndoStatus();
+    markDirty();
+    return true;
+}
+
+// refresh() модели с сохранением выделения строки реплики.
+void MainWindow::refreshTableKeepingSelection() {
+    const QString keepHash = currentWemHash();
+    model_->refresh();
+    restoreTableSelection(keepHash);
+}
+
+void MainWindow::updateUndoStatus() {
+    if (!undoLabel_ || !edits_) return;
+    const auto undoCount = db_->scalarInt(
+        "SELECT COUNT(*) FROM undo_log WHERE scope='edit' AND undone=0;");
+    const auto redoCount = db_->scalarInt(
+        "SELECT COUNT(*) FROM undo_log WHERE scope='edit' AND undone=1;");
+    undoLabel_->setText(QStringLiteral("Отмена: %1  Повтор: %2").arg(undoCount).arg(redoCount));
+}
+
+void MainWindow::markDirty() { dirtySinceAutosave_ = true; }
+
+// Локальная позиция курсора внутри выбранного клипа.
+static std::uint64_t localCursor(const TimelineWidget* tl, const Clip& c) {
+    const std::uint64_t cur = tl->cursorSample();
+    return cur > c.startSample ? cur - c.startSample : 0;
+}
+
+void MainWindow::onUndo() {
+    if (!edits_->canUndo()) return;
+    try {
+        if (!edits_->undo()) return;
+    } catch (const std::exception& e) {
+        QMessageBox::warning(this, QStringLiteral("Отмена"), QString::fromUtf8(e.what()));
+        return;
+    }
+    timeline_->syncTracks();
+    refreshTableKeepingSelection();
+    updateUndoStatus();
+    markDirty();
+}
+
+void MainWindow::onRedo() {
+    if (!edits_->canRedo()) return;
+    try {
+        if (!edits_->redo()) return;
+    } catch (const std::exception& e) {
+        QMessageBox::warning(this, QStringLiteral("Повтор"), QString::fromUtf8(e.what()));
+        return;
+    }
+    timeline_->syncTracks();
+    refreshTableKeepingSelection();
+    updateUndoStatus();
+    markDirty();
+}
+
+void MainWindow::onSplit() {
+    const QString id = selectedTakeId();
+    if (id.isEmpty()) {
+        statusBar()->showMessage(QStringLiteral("Выберите клип на таймлайне"), 4000);
+        return;
+    }
+    const Clip& c = store_->takes()[static_cast<std::size_t>(timeline_->selectedClip())];
+    EditCommand cmd;
+    cmd.type = EditType::Split;
+    cmd.takeId = id.toStdString();
+    cmd.from = localCursor(timeline_, c);
+    if (applyEdit(cmd))
+        statusBar()->showMessage(QStringLiteral("Клип разделён по курсору"), 4000);
+}
+
+void MainWindow::onTrimSilence() {
+    const QString id = selectedTakeId();
+    if (id.isEmpty()) return;
+    EditCommand cmd;
+    cmd.type = EditType::TrimSilence;
+    cmd.takeId = id.toStdString();
+    if (applyEdit(cmd))
+        statusBar()->showMessage(QStringLiteral("Тишина по краям обрезана"), 4000);
+}
+
+void MainWindow::onTrimRange() {
+    const QString id = selectedTakeId();
+    if (id.isEmpty()) return;
+    const Clip& c = store_->takes()[static_cast<std::size_t>(timeline_->selectedClip())];
+    std::uint64_t gf, gt;
+    if (!timeline_->hasRange(gf, gt)) {
+        statusBar()->showMessage(
+            QStringLiteral("Сначала задайте диапазон: клик по линейке + Shift+клик"), 6000);
+        return;
+    }
+    EditCommand cmd;
+    cmd.type = EditType::TrimRange;
+    cmd.takeId = id.toStdString();
+    cmd.from = gf > c.startSample ? gf - c.startSample : 0;
+    cmd.to = gt > c.startSample ? gt - c.startSample : 0;
+    if (applyEdit(cmd))
+        statusBar()->showMessage(QStringLiteral("Обрезано вне диапазона"), 4000);
+}
+
+void MainWindow::onSilence() {
+    const QString id = selectedTakeId();
+    if (id.isEmpty()) return;
+    const Clip& c = store_->takes()[static_cast<std::size_t>(timeline_->selectedClip())];
+    std::uint64_t gf, gt;
+    EditCommand cmd;
+    cmd.type = EditType::Silence;
+    cmd.takeId = id.toStdString();
+    if (timeline_->hasRange(gf, gt)) {
+        cmd.from = gf > c.startSample ? gf - c.startSample : 0;
+        cmd.to = gt > c.startSample ? gt - c.startSample : 0;
+    } // иначе to=0 -> весь клип
+    if (applyEdit(cmd))
+        statusBar()->showMessage(QStringLiteral("Диапазон заглушён"), 4000);
+}
+
+void MainWindow::onReverseRange() {
+    const QString id = selectedTakeId();
+    if (id.isEmpty()) return;
+    const Clip& c = store_->takes()[static_cast<std::size_t>(timeline_->selectedClip())];
+    std::uint64_t gf, gt;
+    EditCommand cmd;
+    cmd.type = EditType::Reverse;
+    cmd.takeId = id.toStdString();
+    if (timeline_->hasRange(gf, gt)) {
+        cmd.from = gf > c.startSample ? gf - c.startSample : 0;
+        cmd.to = gt > c.startSample ? gt - c.startSample : 0;
+    }
+    if (applyEdit(cmd))
+        statusBar()->showMessage(QStringLiteral("Реверс применён"), 4000);
+}
+
+void MainWindow::onNormalize() {
+    const QString id = selectedTakeId();
+    if (id.isEmpty()) return;
+    bool ok = false;
+    const double target = QInputDialog::getDouble(
+        this, QStringLiteral("Нормализация"),
+        QStringLiteral("Целевой пик, dBFS:"), -3.0, -24.0, 0.0, 1, &ok);
+    if (!ok) return;
+    EditCommand cmd;
+    cmd.type = EditType::Normalize;
+    cmd.takeId = id.toStdString();
+    cmd.dValue = target;
+    if (applyEdit(cmd))
+        statusBar()->showMessage(QStringLiteral("Пик нормализован к %1 dBFS").arg(target), 4000);
+}
+
+void MainWindow::onGain() {
+    const QString id = selectedTakeId();
+    if (id.isEmpty()) return;
+    bool ok = false;
+    const double gain = QInputDialog::getDouble(
+        this, QStringLiteral("Усиление клипа"),
+        QStringLiteral("Гейн, dB (применяется при воспроизведении):"),
+        0.0, -60.0, 24.0, 1, &ok);
+    if (!ok) return;
+    EditCommand cmd;
+    cmd.type = EditType::Gain;
+    cmd.takeId = id.toStdString();
+    cmd.dValue = gain;
+    if (applyEdit(cmd))
+        statusBar()->showMessage(QStringLiteral("Гейн клипа: %1 dB").arg(gain), 4000);
+}
+
+void MainWindow::onFadeIn() {
+    const QString id = selectedTakeId();
+    if (id.isEmpty()) return;
+    const Clip& c = store_->takes()[static_cast<std::size_t>(timeline_->selectedClip())];
+    EditCommand cmd;
+    cmd.type = EditType::FadeIn;
+    cmd.takeId = id.toStdString();
+    cmd.from = localCursor(timeline_, c);
+    if (applyEdit(cmd))
+        statusBar()->showMessage(QStringLiteral("Фейд-ин до курсора"), 4000);
+}
+
+void MainWindow::onFadeOut() {
+    const QString id = selectedTakeId();
+    if (id.isEmpty()) return;
+    const Clip& c = store_->takes()[static_cast<std::size_t>(timeline_->selectedClip())];
+    EditCommand cmd;
+    cmd.type = EditType::FadeOut;
+    cmd.takeId = id.toStdString();
+    cmd.from = localCursor(timeline_, c);
+    if (applyEdit(cmd))
+        statusBar()->showMessage(QStringLiteral("Фейд-аут от курсора"), 4000);
+}
+
+void MainWindow::onCrossfade() {
+    const QString id = selectedTakeId();
+    if (id.isEmpty()) return;
+    const Clip* b = crossfadeNeighbor();
+    if (!b) {
+        statusBar()->showMessage(
+            QStringLiteral("Нет клипа, перекрывающего выбранный по времени"), 6000);
+        return;
+    }
+    const std::string secondId = b->id; // applyEdit удалит клип из store
+    EditCommand cmd;
+    cmd.type = EditType::Crossfade;
+    cmd.takeId = id.toStdString();
+    cmd.takeId2 = secondId;
+    if (applyEdit(cmd))
+        statusBar()->showMessage(
+            QStringLiteral("Кроссфейд: слит с %1").arg(QString::fromStdString(secondId)), 5000);
+}
+
+void MainWindow::onFitToRef() {
+    const QString id = selectedTakeId();
+    if (id.isEmpty()) {
+        statusBar()->showMessage(QStringLiteral("Выберите клип на таймлайне"), 4000);
+        return;
+    }
+    EditCommand cmd;
+    cmd.type = EditType::FitToRef;
+    cmd.takeId = id.toStdString();
+    if (applyEdit(cmd))
+        statusBar()->showMessage(
+            QStringLiteral("Fit to Ref: тейк растянут под референс (питч сохранён)"), 5000);
+}
+
+void MainWindow::onAlign() {
+    const QString id = selectedTakeId();
+    if (id.isEmpty()) return;
+    EditCommand cmd;
+    cmd.type = EditType::Align;
+    cmd.takeId = id.toStdString();
+    if (applyEdit(cmd))
+        statusBar()->showMessage(QStringLiteral("Клип выровнен по началу референса"), 4000);
+}
+
+void MainWindow::onDeleteTake(int clipIndex) {
+    if (clipIndex < 0 || clipIndex >= static_cast<int>(store_->takes().size())) return;
+    const Clip& c = store_->takes()[static_cast<std::size_t>(clipIndex)];
+    const QString title = QString::fromStdString(c.title);
+    const QString id = QString::fromStdString(c.id);
+    const auto answer = QMessageBox::question(
+        this, QStringLiteral("Удаление тейка"),
+        QStringLiteral("Удалить тейк %1 полностью?\n(вернуть можно через Ctrl+Z)").arg(title),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (answer != QMessageBox::Yes) return;
+    EditCommand cmd;
+    cmd.type = EditType::DeleteTake;
+    cmd.takeId = id.toStdString();
+    if (applyEdit(cmd))
+        statusBar()->showMessage(
+            QStringLiteral("Тейк %1 удалён (Ctrl+Z вернёт)").arg(title), 5000);
+}
+
+void MainWindow::onClipMoved(int clipIndex, std::uint64_t newStart) {
+    if (clipIndex < 0 || clipIndex >= static_cast<int>(store_->takes().size())) return;
+    // Живой drag уже сдвинул клип — фиксируем позицию командой Move (undo!).
+    EditCommand cmd;
+    cmd.type = EditType::Move;
+    cmd.takeId = store_->takes()[static_cast<std::size_t>(clipIndex)].id;
+    cmd.uValue = newStart;
+    applyEdit(cmd);
+}
+
+void MainWindow::onProjectSettings() {
+    QDialog dlg(this);
+    dlg.setWindowTitle(QStringLiteral("Проект"));
+    auto* form = new QFormLayout(&dlg);
+
+    QSettings pre;
+    auto* enabled = new QCheckBox(QStringLiteral("Автосейв включён"), &dlg);
+    enabled->setChecked(pre.value(QStringLiteral("project/autosaveEnabled"), true).toBool());
+    form->addRow(QString(), enabled);
+
+    auto* minutes = new QSpinBox(&dlg);
+    minutes->setRange(1, 120);
+    minutes->setValue(pre.value(QStringLiteral("project/autosaveMin"), 5).toInt());
+    minutes->setSuffix(QStringLiteral(" мин"));
+    form->addRow(QStringLiteral("Интервал автосейва:"), minutes);
+
+    auto* onlyChanged = new QCheckBox(
+        QStringLiteral("Сохранять только если были изменения"), &dlg);
+    onlyChanged->setChecked(
+        pre.value(QStringLiteral("project/autosaveOnlyIfChanged"), true).toBool());
+    form->addRow(QString(), onlyChanged);
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    form->addRow(buttons);
+
+    if (dlg.exec() != QDialog::Accepted) return;
+    QSettings s;
+    s.setValue(QStringLiteral("project/autosaveEnabled"), enabled->isChecked());
+    s.setValue(QStringLiteral("project/autosaveMin"), minutes->value());
+    s.setValue(QStringLiteral("project/autosaveOnlyIfChanged"), onlyChanged->isChecked());
+}
+
+void MainWindow::onAutosaveTick() {
+    QSettings s;
+    if (!s.value(QStringLiteral("project/autosaveEnabled"), true).toBool()) return;
+    const int intervalMin = s.value(QStringLiteral("project/autosaveMin"), 5).toInt();
+    const bool onlyChanged =
+        s.value(QStringLiteral("project/autosaveOnlyIfChanged"), true).toBool();
+    if (onlyChanged && !dirtySinceAutosave_) return;
+    if (lastAutosave_.secsTo(QDateTime::currentDateTime()) < intervalMin * 60) return;
+    try {
+        edits_->autosaveSnapshot();
+        lastAutosave_ = QDateTime::currentDateTime();
+        dirtySinceAutosave_ = false;
+        suppressAutosaveError_ = false;
+        autosaveLabel_->setText(
+            QStringLiteral("Автосейв: %1").arg(lastAutosave_.toString(QStringLiteral("HH:mm"))));
+    } catch (const std::exception& e) {
+        // Не спамим: одна ошибка на серию неудач.
+        if (!suppressAutosaveError_) {
+            suppressAutosaveError_ = true;
+            statusBar()->showMessage(QString::fromUtf8(e.what()), 8000);
+        }
+    }
+}
+
+// Фильтр таймлайна по выбранной реплике: показываем только её тейки
+// (все тейки остаются в ClipStore и в undo-истории).
+void MainWindow::connectTableSelection() {
+    connect(table_->selectionModel(), &QItemSelectionModel::currentRowChanged, this,
+            &MainWindow::onTableLineChanged);
+}
+
+void MainWindow::onTableLineChanged() {
+    const QString hash = currentWemHash();
+    if (hash.isEmpty()) {
+        timeline_->clearLineFilter(); // ничего не выбрано — дорожки тейков пусты
+    } else {
+        timeline_->setLineFilter(hash.toStdString());
+    }
+}
+
 void MainWindow::openDatabase() {
     QString path = QFileDialog::getSaveFileName(this, QStringLiteral("Открыть или создать базу"),
                                                  dbPath_, QStringLiteral("SQLite (*.db)"),
@@ -661,6 +1307,15 @@ void MainWindow::openDatabase() {
         delete model_;
         model_ = new LinesSqlModel(*db_, table_);
         table_->setModel(model_);
+        connectTableSelection(); // у новой модели свой selectionModel
+        // Фаза 2: стек правок смотрит на новую БД, тейки перезагружаем.
+        store_ = std::make_unique<ClipStore>();
+        edits_ = std::make_unique<EditStack>(*db_, *store_, myDubDir_.toStdString());
+        timeline_->setStore(store_.get());
+        const EditStack::SessionInfo session = edits_->loadSession();
+        takeCounter_ = session.maxTakeNum;
+        timeline_->syncTracks();
+        updateUndoStatus();
         rebuildTree();
         reloadStats();
     } catch (const std::exception& e) {
@@ -752,17 +1407,63 @@ void MainWindow::rebuildTree() {
     tree_->collapseAll();
 }
 
+// Вернуть выделение строки реплики по wem_hash после refresh/смены фильтра:
+// строка не слетает, пока пользователь сам не переключится в таблице.
+void MainWindow::restoreTableSelection(const QString& wemHash) {
+    if (wemHash.isEmpty() || !model_) return;
+    const int rows = model_->rowCount();
+    for (int i = 0; i < rows; ++i) {
+        if (model_->wemHashAt(i) == wemHash) {
+            const QModelIndex idx = model_->index(i, 0);
+            table_->setCurrentIndex(idx);
+            table_->scrollTo(idx, QAbstractItemView::PositionAtCenter);
+            return;
+        }
+    }
+}
+
+// ПКМ внутри выделенного диапазона на таймлайне: меню правок диапазона.
+void MainWindow::onRangeContextMenu(const QPoint& globalPos) {
+    const bool haveClip = !selectedTakeId().isEmpty();
+    QMenu menu(this);
+    auto addRange = [&](const QString& text, auto handler) {
+        QAction* a = menu.addAction(text);
+        a->setEnabled(haveClip);
+        connect(a, &QAction::triggered, this, handler);
+    };
+    addRange(QStringLiteral("Тишина в диапазоне"), &MainWindow::onSilence);
+    addRange(QStringLiteral("Реверс диапазона"), &MainWindow::onReverseRange);
+    addRange(QStringLiteral("Обрезать вне диапазона"), &MainWindow::onTrimRange);
+    menu.addSeparator();
+    addRange(QStringLiteral("Нормализовать…"), &MainWindow::onNormalize);
+    addRange(QStringLiteral("Усиление…"), &MainWindow::onGain);
+    menu.addSeparator();
+    addRange(QStringLiteral("Фейд-ин до курсора"), &MainWindow::onFadeIn);
+    addRange(QStringLiteral("Фейд-аут от курсора"), &MainWindow::onFadeOut);
+    addRange(QStringLiteral("Разделить по курсору"), &MainWindow::onSplit);
+    menu.addSeparator();
+    addRange(QStringLiteral("Fit to Ref"), &MainWindow::onFitToRef);
+    if (!haveClip) {
+        QAction* hint = menu.addAction(
+            QStringLiteral("Сначала выделите тейк (клик/выделение по его дорожке)"));
+        hint->setEnabled(false);
+    }
+    menu.exec(globalPos);
+}
+
 void MainWindow::onTreeSelection() {
+    const QString keepHash = currentWemHash();
     const QModelIndexList selected = tree_->selectionModel()->selectedIndexes();
     if (selected.isEmpty()) {
         model_->setFilter({}, {}, search_->text());
-        return;
+    } else {
+        const QModelIndex idx = selected.first();
+        const QString questId = idx.data(kRoleQuestId).toString();
+        const QString fileId = idx.data(kRoleFileId).toString();
+        // Выбрана сцена — фильтруем по ней; выбран файл — по файлу.
+        model_->setFilter(questId.isEmpty() ? fileId : QString(), questId, search_->text());
     }
-    const QModelIndex idx = selected.first();
-    const QString questId = idx.data(kRoleQuestId).toString();
-    const QString fileId = idx.data(kRoleFileId).toString();
-    // Выбрана сцена — фильтруем по ней; выбран файл — по файлу.
-    model_->setFilter(questId.isEmpty() ? fileId : QString(), questId, search_->text());
+    restoreTableSelection(keepHash);
 }
 
 void MainWindow::onSearchChanged() {

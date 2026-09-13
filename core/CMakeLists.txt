@@ -3,8 +3,10 @@
 add_library(dubstudio_core STATIC
   project/database.cpp
   project/importer.cpp
+  project/edit_stack.cpp
   audio/audio_engine.cpp
   audio/clip_store.cpp
+  audio/audio_ops.cpp
   audio/wav_writer.cpp
 )
 
