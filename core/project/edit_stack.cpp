@@ -150,6 +150,22 @@ EditStack::EditStack(Database& db, ClipStore& store, std::string myDubDir)
 
 namespace {
 
+// Статус реплики по факту наличия тейков: тейки есть -> 'recorded',
+// нет -> 'todo'. Ручные 'in_review'/'done' не трогаем.
+void syncLineStatus(sqlite3* h, const std::string& wemHash) {
+    sqlite3_stmt* st = nullptr;
+    if (sqlite3_prepare_v2(h,
+                           "UPDATE lines SET status = CASE WHEN EXISTS("
+                           "  SELECT 1 FROM takes WHERE wem_hash=?1)"
+                           " THEN 'recorded' ELSE 'todo' END"
+                           " WHERE wem_hash=?1 AND status IN ('todo','recorded');",
+                           -1, &st, nullptr) == SQLITE_OK) {
+        sqlite3_bind_text(st, 1, wemHash.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_step(st);
+        sqlite3_finalize(st);
+    }
+}
+
 // scalar по параметру: SELECT ... WHERE take_id=?1
 std::string scalarText1(sqlite3* h, const std::string& sql, const std::string& p1) {
     sqlite3_stmt* st = nullptr;
@@ -505,6 +521,7 @@ std::int64_t EditStack::apply(const EditCommand& cmd) {
             sqlite3_bind_text(st, 1, removed.id.c_str(), -1, SQLITE_TRANSIENT);
             sqlite3_step(st);
             sqlite3_finalize(st);
+            syncLineStatus(h, removed.wemHash); // тейков не осталось -> 'todo'
         }
 
         db_.exec("COMMIT");
@@ -662,6 +679,7 @@ bool EditStack::undo() {
             sqlite3_bind_text(st, 1, cid.c_str(), -1, SQLITE_TRANSIENT);
             sqlite3_step(st);
             sqlite3_finalize(st);
+            syncLineStatus(h, created.value("wem", std::string()));
         }
         if (!removed.is_null()) {
             sqlite3_stmt* st = nullptr;
@@ -687,6 +705,7 @@ bool EditStack::undo() {
             sqlite3_bind_text(st, 7, rtitle.c_str(), -1, SQLITE_TRANSIENT);
             sqlite3_step(st);
             sqlite3_finalize(st);
+            syncLineStatus(h, rwem); // тейк восстановлен -> 'recorded'
         }
         // Основной тейк -> предыдущие метрики.
         {
@@ -806,6 +825,7 @@ bool EditStack::redo() {
             sqlite3_bind_text(st, 1, rid.c_str(), -1, SQLITE_TRANSIENT);
             sqlite3_step(st);
             sqlite3_finalize(st);
+            syncLineStatus(h, removed.value("wem", std::string()));
         }
         {
             sqlite3_stmt* st = nullptr;

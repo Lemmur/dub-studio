@@ -640,22 +640,28 @@ TEST_CASE("EditStack: удаление тейка целиком, undo/redo и �
     TestProject p;
     p.addRecordedTake();
     REQUIRE(p.store->takes().size() == 1);
+    p.db->exec("UPDATE lines SET status='recorded' WHERE wem_hash='HASH0001';");
 
     EditCommand c = p.cmd(EditType::DeleteTake);
     REQUIRE(p.edits->apply(c) > 0);
     CHECK(p.store->takes().empty());
     CHECK(p.db->scalarInt("SELECT COUNT(*) FROM takes;") == 0);
+    // У реплики не осталось тейков -> статус назад 'todo'.
+    CHECK(p.db->scalarText("SELECT status FROM lines WHERE wem_hash='HASH0001';") == "todo");
 
     // Undo возвращает тейк в состоянии на момент удаления.
     REQUIRE(p.edits->undo());
     REQUIRE(p.store->takes().size() == 1);
     CHECK(p.db->scalarInt("SELECT COUNT(*) FROM takes;") == 1);
     CHECK(p.store->takes()[0].samples.size() == 48000);
+    CHECK(p.db->scalarText("SELECT status FROM lines WHERE wem_hash='HASH0001';") ==
+          "recorded");
 
     // Redo снова удаляет.
     REQUIRE(p.edits->redo());
     CHECK(p.store->takes().empty());
     CHECK(p.db->scalarInt("SELECT COUNT(*) FROM takes;") == 0);
+    CHECK(p.db->scalarText("SELECT status FROM lines WHERE wem_hash='HASH0001';") == "todo");
 
     // Рестарт: удалённый тейк не воскресает, но undo его ещё возвращает.
     p.edits.reset();
