@@ -84,6 +84,7 @@ private:
     void buildEditMenuActions(); // Правка + хоткеи S/Ctrl+Z/Ctrl+Y (Фаза 2)
     void connectTableSelection(); // selectionModel пересоздаётся со сменой модели
     void restoreTableSelection(const QString& wemHash); // выделение не слетает
+    void refreshTableKeepingSelection(); // refresh() модели + возврат выделения
     void rebuildTree();
     void reloadStats();
     void finalizeTake();

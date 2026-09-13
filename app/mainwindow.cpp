@@ -959,9 +959,17 @@ bool MainWindow::applyEdit(const EditCommand& cmd) {
         return false;
     }
     timeline_->syncTracks();
+    refreshTableKeepingSelection(); // статус реплики мог измениться
     updateUndoStatus();
     markDirty();
     return true;
+}
+
+// refresh() модели с сохранением выделения строки реплики.
+void MainWindow::refreshTableKeepingSelection() {
+    const QString keepHash = currentWemHash();
+    model_->refresh();
+    restoreTableSelection(keepHash);
 }
 
 void MainWindow::updateUndoStatus() {
@@ -990,6 +998,7 @@ void MainWindow::onUndo() {
         return;
     }
     timeline_->syncTracks();
+    refreshTableKeepingSelection();
     updateUndoStatus();
     markDirty();
 }
@@ -1003,6 +1012,7 @@ void MainWindow::onRedo() {
         return;
     }
     timeline_->syncTracks();
+    refreshTableKeepingSelection();
     updateUndoStatus();
     markDirty();
 }
