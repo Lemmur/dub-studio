@@ -58,6 +58,7 @@ public:
     bool isOpen() const { return rt_ && rt_->isStreamOpen(); }
     unsigned int sampleRate() const { return sampleRate_; }
     unsigned int bufferFrames() const { return bufferFrames_; }
+    const AudioDevice& currentDevice() const { return currentDevice_; }
 
     // --- Метроном -----------------------------------------------------------
     void setMetronomeEnabled(bool on) { metroOn_.store(on, std::memory_order_relaxed); }

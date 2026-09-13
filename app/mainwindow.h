@@ -54,6 +54,7 @@ private:
     QString currentWemHash() const;
     bool openAudioDevice(const QString& deviceId, unsigned int sampleRate,
                          unsigned int bufferFrames);
+    void updateAudioStatus(); // индикатор звука в статус-баре
 
     std::unique_ptr<Database> db_;
     QString dbPath_;
@@ -74,6 +75,7 @@ private:
     LevelMeter* level_ = nullptr;
     QLabel* xrunLabel_ = nullptr;
     QLabel* recTimeLabel_ = nullptr;
+    QLabel* audioLabel_ = nullptr; // устройство/частота/буфер
     QString audioDeviceId_;      // "API:deviceId"
     unsigned int sampleRate_ = 48000;
     unsigned int bufferFrames_ = 256;

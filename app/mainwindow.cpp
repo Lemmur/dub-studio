@@ -209,12 +209,15 @@ void MainWindow::buildUi() {
     dbLabel_ = new QLabel(this);
     xrunLabel_ = new QLabel(this);
     recTimeLabel_ = new QLabel(this);
+    audioLabel_ = new QLabel(this);
     level_ = new LevelMeter(this);
     statusBar()->addWidget(statsLabel_, 1);
     statusBar()->addWidget(recTimeLabel_);
     statusBar()->addWidget(xrunLabel_);
     statusBar()->addWidget(level_);
+    statusBar()->addPermanentWidget(audioLabel_); // звук: устройство · Гц · буфер
     statusBar()->addPermanentWidget(dbLabel_);
+    updateAudioStatus();
 }
 
 void MainWindow::buildTransport() {
@@ -339,11 +342,7 @@ bool MainWindow::openAudioDevice(const QString& deviceId, unsigned int sampleRat
                 s.setValue(QStringLiteral("audio/device"), deviceId);
                 s.setValue(QStringLiteral("audio/sampleRate"), sampleRate_);
                 s.setValue(QStringLiteral("audio/buffer"), bufferFrames_);
-                statusBar()->showMessage(
-                    QStringLiteral("Аудио: %1 [%2] %3 Гц, буфер %4")
-                        .arg(QString::fromStdString(d.name), QString::fromStdString(d.apiName))
-                        .arg(sampleRate_)
-                        .arg(bufferFrames_), 8000);
+                updateAudioStatus();
                 return true;
             } catch (const std::exception& e) {
                 statusBar()->showMessage(QString::fromUtf8(e.what()), 8000);
@@ -423,6 +422,21 @@ void MainWindow::onAudioSettings() {
     QSettings s;
     s.setValue(QStringLiteral("audio/directMonitor"), direct->isChecked());
     s.setValue(QStringLiteral("metro/beats"), beatsSpin->value());
+}
+
+void MainWindow::updateAudioStatus() {
+    if (!audioLabel_) return;
+    if (engine_ && engine_->isOpen()) {
+        const auto& d = engine_->currentDevice();
+        audioLabel_->setText(
+            QStringLiteral("Звук: %1 [%2] · %3 Гц · буфер %4")
+                .arg(QString::fromStdString(d.name), QString::fromStdString(d.apiName))
+                .arg(engine_->sampleRate())
+                .arg(engine_->bufferFrames()));
+        audioLabel_->setToolTip(QStringLiteral("Устройство, частота проекта и размер буфера"));
+    } else {
+        audioLabel_->setText(QStringLiteral("Звук: не открыт (Аудио → Настройки аудио…)"));
+    }
 }
 
 void MainWindow::onRecord() {
