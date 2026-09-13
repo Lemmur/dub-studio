@@ -35,6 +35,7 @@
 #include <QPalette>
 #include <QScrollArea>
 #include <QSettings>
+#include <QSlider>
 #include <QStandardItemModel>
 #include <QSpinBox>
 #include <QStatusBar>
@@ -123,6 +124,10 @@ MainWindow::MainWindow(const QString& dbPath, QWidget* parent) : QMainWindow(par
     bufferFrames_ = s.value(QStringLiteral("audio/buffer"), 256).toUInt();
     engine_->setTempo(s.value(QStringLiteral("metro/bpm"), 100).toInt(),
                       s.value(QStringLiteral("metro/beats"), 4).toInt());
+    // Мониторинг: восстановить Direct Monitoring и громкость (PLAN.md 6.1).
+    engine_->setDirectMonitoring(s.value(QStringLiteral("audio/directMonitor"), false).toBool());
+    engine_->setMonitoringGain(
+        static_cast<float>(s.value(QStringLiteral("audio/monitorGain"), 0.8).toDouble()));
     const QString lastDevice = s.value(QStringLiteral("audio/device")).toString();
     if (!lastDevice.isEmpty() && openAudioDevice(lastDevice, sampleRate_, bufferFrames_)) {
         // ок
@@ -428,8 +433,28 @@ void MainWindow::onAudioSettings() {
     bufferBox->setCurrentIndex(bufIdx >= 0 ? bufIdx : 1);
     form->addRow(QStringLiteral("Буфер, сэмплов:"), bufferBox);
 
-    auto* direct = new QCheckBox(QStringLiteral("Direct Monitoring (аппаратный, софт-копия выключается)"), &dlg);
+    QSettings pre;
+    auto* direct = new QCheckBox(
+        QStringLiteral("Direct Monitoring (аппаратный, софт-копия выключается)"), &dlg);
+    direct->setChecked(pre.value(QStringLiteral("audio/directMonitor"), false).toBool());
     form->addRow(QString(), direct);
+
+    // Громкость программного мониторинга (PLAN.md 6.1: мониторинг с gain).
+    auto* gainRow = new QWidget(&dlg);
+    auto* gainLay = new QHBoxLayout(gainRow);
+    gainLay->setContentsMargins(0, 0, 0, 0);
+    auto* gainSlider = new QSlider(Qt::Horizontal, gainRow);
+    gainSlider->setRange(0, 100);
+    const double gainNow =
+        pre.value(QStringLiteral("audio/monitorGain"), 0.8).toDouble();
+    gainSlider->setValue(static_cast<int>(gainNow * 100.0));
+    auto* gainVal = new QLabel(QStringLiteral("%1 %").arg(gainSlider->value()), gainRow);
+    gainVal->setFixedWidth(48);
+    QObject::connect(gainSlider, &QSlider::valueChanged, gainVal,
+                     [gainVal](int v) { gainVal->setText(QStringLiteral("%1 %").arg(v)); });
+    gainLay->addWidget(gainSlider, 1);
+    gainLay->addWidget(gainVal);
+    form->addRow(QStringLiteral("Громкость мониторинга:"), gainRow);
 
     auto* beatsSpin = new QSpinBox(&dlg);
     beatsSpin->setRange(1, 12);
@@ -448,9 +473,12 @@ void MainWindow::onAudioSettings() {
     const auto buf = static_cast<unsigned int>(bufferBox->currentData().toUInt());
     if (!key.isEmpty()) openAudioDevice(key, rate, buf);
     engine_->setDirectMonitoring(direct->isChecked());
+    const float gain = static_cast<float>(gainSlider->value()) / 100.0f;
+    engine_->setMonitoringGain(gain);
     engine_->setTempo(engine_->bpm(), beatsSpin->value());
     QSettings s;
     s.setValue(QStringLiteral("audio/directMonitor"), direct->isChecked());
+    s.setValue(QStringLiteral("audio/monitorGain"), gain);
     s.setValue(QStringLiteral("metro/beats"), beatsSpin->value());
 }
 
