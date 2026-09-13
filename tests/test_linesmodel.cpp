@@ -94,6 +94,17 @@ TEST_CASE("LinesSqlModel: фильтры сцена/файл/FTS", "[model]") {
                     .data(Qt::DisplayRole).toString().toStdString() == "Lunka");
     }
 
+    SECTION("FTS-поиск по вхождению (префикс токена)") {
+        // "Coe" должен находить "Coen" — раньше матчились только целые токены.
+        model.setFilter({}, {}, "Coe");
+        REQUIRE(model.rowCount() >= 1);
+        model.setFilter({}, {}, "coe loo"); // два префикса: Coen + look
+        REQUIRE(model.rowCount() >= 1);
+        // Колоночный фильтр тоже префиксный.
+        model.setFilter({}, {}, "speaker_name:Lun");
+        REQUIRE(model.rowCount() == 1);
+    }
+
     SECTION("FTS-поиск без результатов") {
         model.setFilter({}, {}, "такоготекстанет");
         REQUIRE(model.rowCount() == 0);
