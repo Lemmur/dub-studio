@@ -616,18 +616,21 @@ void MainWindow::onRecord() {
 
 void MainWindow::onPlay() {
     if (engine_->isRecording()) return;
-    // Микс ВИДИМЫХ клипов (фильтр по реплике): позиции/гейны/фейды (PLAN.md 6.4).
+    // Микс ВИДИМЫХ клипов (фильтр по выбранной реплике): позиции/гейны/фейды.
     std::vector<Clip> visible;
-    const std::string& filter = timeline_->lineFilter();
-    for (const auto& t : store_->takes()) {
-        if (filter.empty() || t.wemHash == filter) visible.push_back(t);
+    if (timeline_->lineFilterActive()) {
+        const std::string& filter = timeline_->lineFilter();
+        for (const auto& t : store_->takes()) {
+            if (t.wemHash == filter) visible.push_back(t);
+        }
     }
     const std::vector<float> mix = renderMix(visible);
     if (mix.empty()) {
         statusBar()->showMessage(
-            filter.empty() ? QStringLiteral("Нет тейков для плейбека")
-                           : QStringLiteral("У этой реплики ещё нет тейков"),
-            3000);
+            timeline_->lineFilterActive()
+                ? QStringLiteral("У этой реплики ещё нет тейков")
+                : QStringLiteral("Выберите реплику в таблице — плей играет её тейки"),
+            4000);
         return;
     }
     engine_->play(mix.data(), mix.size());
@@ -1216,7 +1219,12 @@ void MainWindow::connectTableSelection() {
 }
 
 void MainWindow::onTableLineChanged() {
-    timeline_->setLineFilter(currentWemHash().toStdString());
+    const QString hash = currentWemHash();
+    if (hash.isEmpty()) {
+        timeline_->clearLineFilter(); // ничего не выбрано — дорожки тейков пусты
+    } else {
+        timeline_->setLineFilter(hash.toStdString());
+    }
 }
 
 void MainWindow::openDatabase() {

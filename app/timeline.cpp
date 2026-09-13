@@ -60,8 +60,9 @@ void TimelineWidget::buildRows() {
     if (store_) {
         const auto& takes = store_->takes();
         for (std::size_t i = 0; i < takes.size(); ++i) {
-            // Фильтр по реплике: на таймлайне только тейки выбранной реплики.
-            if (!lineFilter_.empty() && takes[i].wemHash != lineFilter_) continue;
+            // Фильтр по реплике: на таймлайне только тейки выбранной реплики;
+            // без выбранной реплики дорожки тейков пусты.
+            if (!lineFilterActive_ || takes[i].wemHash != lineFilter_) continue;
             Row r;
             r.isFixed = false;
             r.title = QString::fromStdString(takes[i].title);
@@ -74,9 +75,18 @@ void TimelineWidget::buildRows() {
 }
 
 void TimelineWidget::setLineFilter(const std::string& wemHash) {
-    if (lineFilter_ == wemHash) return;
+    if (lineFilterActive_ && lineFilter_ == wemHash) return;
     lineFilter_ = wemHash;
+    lineFilterActive_ = true;
     selected_ = -1; // выбранный клип мог уйти из вида
+    syncTracks();
+    emit selectionChanged();
+}
+
+void TimelineWidget::clearLineFilter() {
+    if (!lineFilterActive_) return;
+    lineFilterActive_ = false;
+    selected_ = -1;
     syncTracks();
     emit selectionChanged();
 }

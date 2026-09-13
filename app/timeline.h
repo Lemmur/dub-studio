@@ -29,9 +29,11 @@ public:
     void tick();
 
     // --- Фаза 2: редактура -----------------------------------------------------
-    // Фильтр дорожек по реплике: показывать только тейки выбранной реплики
-    // (wem_hash); пустая строка = показывать все тейки.
+    // Фильтр дорожек по реплике: тейки на таймлайне — только выбранной реплики
+    // (wem_hash). Пока реплика не выбрана — дорожки тейков пусты (clearLineFilter).
     void setLineFilter(const std::string& wemHash);
+    void clearLineFilter();
+    bool lineFilterActive() const { return lineFilterActive_; }
     const std::string& lineFilter() const { return lineFilter_; }
 
     int selectedClip() const { return selected_; } // индекс в ClipStore, -1 = нет
@@ -77,7 +79,8 @@ private:
 
     AudioEngine* engine_ = nullptr;
     ClipStore* store_ = nullptr;
-    std::string lineFilter_; // wem_hash выбранной реплики ("" = все тейки)
+    std::string lineFilter_;      // wem_hash выбранной реплики
+    bool lineFilterActive_ = false; // false = реплика не выбрана -> тейков не показываем
 
     std::vector<Row> rows_;
     double samplesPerPixel_ = 512.0; // zoom: от full-view до 1/64 сэмпла на пиксель
