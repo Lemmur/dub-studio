@@ -46,6 +46,10 @@ public:
 
     // --- Устройства ---------------------------------------------------------
     // Все устройства всех скомпилированных API, ASIO первыми (PLAN.md 6.1).
+    // ВАЖНО: ASIO-драйвер однопользовательский — пока поток этого API открыт
+    // у нас, повторная инициализация драйвера в новом экземпляре RtAudio
+    // завершается ошибкой. Поэтому для открытого API возвращается
+    // запомненное устройство (currentDevice_), остальные API пробятся честно.
     std::vector<AudioDevice> listDevices() const;
     // Дуплекс 1-in / 2-out на выбранном устройстве, частота проекта, буфер.
     // При ошибке — std::runtime_error с текстом.
@@ -108,6 +112,7 @@ private:
     void awaitIdleBlock();
 
     std::unique_ptr<RtAudio> rt_; // RtAudio некопируем, владение через unique_ptr
+    AudioDevice currentDevice_;   // устройство открытого потока (для listDevices)
     unsigned int sampleRate_ = 48000;
     unsigned int bufferFrames_ = 256;
 

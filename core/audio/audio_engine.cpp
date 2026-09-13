@@ -60,15 +60,22 @@ std::vector<RtAudio::Api> AudioEngine::compiledApis() {
 
 std::vector<AudioDevice> AudioEngine::listDevices() const {
     std::vector<AudioDevice> result;
+    const bool streamOpen = rt_ && rt_->isStreamOpen();
     const auto apis = compiledApis();
     for (RtAudio::Api api : apis) {
         if (api != RtAudio::WINDOWS_ASIO && api != RtAudio::WINDOWS_WASAPI) continue;
+        // Открытый нами API не ре-пробим: ASIO-драйвер однопользовательский и
+        // вторая инициализация упадёт. Возвращаем запомненное устройство.
+        if (streamOpen && currentDevice_.api == api) {
+            result.push_back(currentDevice_);
+            continue;
+        }
         RtAudio rt(api);
         const auto ids = rt.getDeviceIds();
         const unsigned int defIn = rt.getDefaultInputDevice();
         for (unsigned int id : ids) {
             RtAudio::DeviceInfo info = rt.getDeviceInfo(id);
-            if (info.ID != id) continue; // устройство пропало между вызовами
+            if (info.ID != id || info.name.empty()) continue; // пропало/пустое
             AudioDevice d;
             d.api = api;
             d.apiName = apiLabel(api);
@@ -89,6 +96,7 @@ void AudioEngine::open(const AudioDevice& device, unsigned int sampleRate,
     close(); // клики/арена перестраиваются только при остановленном потоке
     sampleRate_ = sampleRate;
     bufferFrames_ = bufferFrames;
+    currentDevice_ = device; // для listDevices() при открытом потоке (ASIO)
 
     rt_ = std::make_unique<RtAudio>(device.api);
 
