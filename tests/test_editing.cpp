@@ -3,6 +3,7 @@
 // новый EditStack на той же БД = симуляция перезапуска приложения.
 #include "catch_amalgamated.hpp"
 #include "test_helpers.h"
+#include "timeline.h"
 
 #include "dubstudio/audio_engine.h"
 #include "dubstudio/audio_ops.h"
@@ -10,6 +11,9 @@
 #include "dubstudio/database.h"
 #include "dubstudio/edit_stack.h"
 #include "dubstudio/wav_writer.h"
+
+#include <QApplication>
+#include <QMouseEvent>
 
 #include <algorithm>
 #include <cmath>
@@ -527,6 +531,81 @@ TEST_CASE("EditStack: старый формат id take_N_hash из баз Фа�
     REQUIRE(s.takes == 1);
     CHECK(s.maxTakeNum == 9);                          // номер распознан
     CHECK(p.store->takes()[0].title == "TAKE-09");     // тайтл восстановлен
+}
+
+// --- Таймлайн: курсор не «улетает» при отпускании мыши ---------------------------
+// Регрессия: серия быстрых кликов (double click) и «нажал-подержал-отпустил»
+// не должны сбрасывать позицию курсора редактирования.
+TEST_CASE("Timeline: курсор стабилен при click/release/dblclick", "[edit][ui]") {
+    static int argc = 1;
+    static char name[] = "dubstudio_tests";
+    static char* argv[] = {name, nullptr};
+    qputenv("QT_QPA_PLATFORM", "offscreen");
+    static QApplication app(argc, argv);
+
+    dubstudio::ClipStore store;
+    dubstudio::Clip c;
+    c.id = "HASH0001_take_1";
+    c.title = "TAKE-01";
+    c.wemHash = "HASH0001";
+    c.samples.assign(48000 * 2, 0.3f); // 2 c
+    store.addTake(c);
+
+    dubstudio::TimelineWidget w;
+    w.setStore(&store);
+    w.setLineFilter("HASH0001");
+    w.resize(1200, 500);
+
+    const auto sampleAt = [&](double x) {
+        return static_cast<std::uint64_t>((x - 150.0) * 512.0); // spp по умолчанию
+    };
+    const auto pressAt = [&](double x, double y) {
+        QMouseEvent ev(QEvent::MouseButtonPress, QPointF(x, y), QPointF(x, y),
+                       Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(&w, &ev);
+    };
+    const auto moveTo = [&](double x, double y) {
+        QMouseEvent ev(QEvent::MouseMove, QPointF(x, y), QPointF(x, y),
+                       Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(&w, &ev);
+    };
+    const auto releaseAt = [&](double x, double y) {
+        QMouseEvent ev(QEvent::MouseButtonRelease, QPointF(x, y), QPointF(x, y),
+                       Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(&w, &ev);
+    };
+    const auto dblClickAt = [&](double x, double y) {
+        QMouseEvent ev(QEvent::MouseButtonDblClick, QPointF(x, y), QPointF(x, y),
+                       Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(&w, &ev);
+    };
+
+    // y=120 — полотно пустой дорожки (Track 1): клик = курсор.
+    pressAt(600, 120);
+    CHECK(w.cursorSample() == sampleAt(600));
+    // «Держу минуту» с мелким дрожанием руки.
+    for (int i = 0; i < 50; ++i) moveTo(600 + (i % 5), 120);
+    const auto before = w.cursorSample();
+    CHECK(before == sampleAt(604)); // последний move
+    releaseAt(604, 120);
+    CHECK(w.cursorSample() == before); // << РЕГРЕССИЯ: не улетает в 0
+
+    // Серия быстрых кликов (double click по дорожке) — вид/курсор не сбрасывается.
+    pressAt(700, 120);
+    releaseAt(700, 120);
+    pressAt(700, 120);
+    dblClickAt(700, 120);
+    releaseAt(700, 120);
+    CHECK(w.cursorSample() == sampleAt(700));
+
+    // Shift+клик правее — диапазон.
+    QMouseEvent shift(QEvent::MouseButtonPress, QPointF(900, 120), QPointF(900, 120),
+                      Qt::LeftButton, Qt::LeftButton, Qt::ShiftModifier);
+    QApplication::sendEvent(&w, &shift);
+    std::uint64_t f = 0, t = 0;
+    CHECK(w.hasRange(f, t));
+    CHECK(f == sampleAt(700));
+    CHECK(t == sampleAt(900));
 }
 
 TEST_CASE("Автосейв: manifest.json и wal checkpoint", "[edit]") {

@@ -168,11 +168,6 @@ void TimelineWidget::selectClip(int clipIndex) {
     emit selectionChanged();
 }
 
-void TimelineWidget::setCursor(std::uint64_t sample) {
-    cursorSample_ = anchorSample_ = sample;
-    update();
-}
-
 bool TimelineWidget::hasRange(std::uint64_t& from, std::uint64_t& to) const {
     if (anchorSample_ == cursorSample_) return false;
     from = std::min(anchorSample_, cursorSample_);

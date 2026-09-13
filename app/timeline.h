@@ -39,7 +39,9 @@ public:
     int selectedClip() const { return selected_; } // индекс в ClipStore, -1 = нет
     void selectClip(int clipIndex);                // подсветка + перерисовка
     std::uint64_t cursorSample() const { return cursorSample_; }
-    void setCursor(std::uint64_t sample);          // курсор = анкер (схлопнуть диапазон)
+    // setCursor НЕ переопределяем: он скрыл бы QWidget::setCursor(QCursor),
+    // и setCursor(Qt::ArrowCursor) в release молча обнулял курсор
+    // (Qt::ArrowCursor == 0 → cursorSample_ = 0).
     // Диапазон Shift+клика в глобальных сэмплах таймлайна; false если пуст.
     bool hasRange(std::uint64_t& from, std::uint64_t& to) const;
 
