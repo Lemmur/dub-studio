@@ -27,6 +27,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QKeySequence>
+#include <QLinearGradient>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
@@ -57,6 +58,24 @@ namespace {
 // Роли для хранения id в элементах дерева.
 constexpr int kRoleFileId = Qt::UserRole + 1;
 constexpr int kRoleQuestId = Qt::UserRole + 2;
+
+// Тонкий вертикальный градиентный разделитель между блоками статус-бара.
+class StatusSeparator : public QWidget {
+public:
+    explicit StatusSeparator(QWidget* parent = nullptr) : QWidget(parent) {
+        setFixedSize(11, 18);
+    }
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter p(this);
+        QLinearGradient g(0, 2, 0, height() - 2);
+        g.setColorAt(0.0, QColor(0x3a, 0x3a, 0x3a));
+        g.setColorAt(0.5, QColor(0x88, 0x88, 0x88));
+        g.setColorAt(1.0, QColor(0x3a, 0x3a, 0x3a));
+        p.setPen(QPen(QBrush(g), 1));
+        p.drawLine(width() / 2, 2, width() / 2, height() - 2);
+    }
+};
 
 } // namespace
 
@@ -204,18 +223,29 @@ void MainWindow::buildUi() {
     tlDock->setWidget(tlScroll);
     addDockWidget(Qt::BottomDockWidgetArea, tlDock);
 
-    // --- Статус-бар ---
+    // --- Статус-бар: блоки с разделителями ---
+    // [Статистика] │ [REC-время] │ [Xrun] │ [метр]  …  [Звук-чип] │ [БД]
     statsLabel_ = new QLabel(this);
-    dbLabel_ = new QLabel(this);
-    xrunLabel_ = new QLabel(this);
+    statsLabel_->setStyleSheet(QStringLiteral("color:#a8b2c0; padding:0 4px;"));
     recTimeLabel_ = new QLabel(this);
-    audioLabel_ = new QLabel(this);
+    recTimeLabel_->setStyleSheet(QStringLiteral("padding:0 4px;"));
+    xrunLabel_ = new QLabel(this);
+    xrunLabel_->setStyleSheet(QStringLiteral("padding:0 4px;"));
     level_ = new LevelMeter(this);
+    audioLabel_ = new QLabel(this);
+    audioLabel_->setStyleSheet(QStringLiteral(
+        "background:#2e3444; border-radius:4px; padding:1px 8px; color:#9fc1ff;"));
+    dbLabel_ = new QLabel(this);
+    dbLabel_->setStyleSheet(QStringLiteral("color:#7a7a7a; padding:0 4px;"));
     statusBar()->addWidget(statsLabel_, 1);
+    statusBar()->addWidget(new StatusSeparator(this));
     statusBar()->addWidget(recTimeLabel_);
+    statusBar()->addWidget(new StatusSeparator(this));
     statusBar()->addWidget(xrunLabel_);
+    statusBar()->addWidget(new StatusSeparator(this));
     statusBar()->addWidget(level_);
     statusBar()->addPermanentWidget(audioLabel_); // звук: устройство · Гц · буфер
+    statusBar()->addPermanentWidget(new StatusSeparator(this));
     statusBar()->addPermanentWidget(dbLabel_);
     updateAudioStatus();
 }
@@ -575,12 +605,19 @@ void MainWindow::onTick() {
         ClipStore::rebuildPeaks(clip);
         const double sec = static_cast<double>(engine_->recordedFrames()) / engine_->sampleRate();
         recTimeLabel_->setText(QStringLiteral("REC %1 c").arg(sec, 0, 'f', 1));
+        recTimeLabel_->setStyleSheet(
+            QStringLiteral("color:#ff6b6b; font-weight:bold; padding:0 4px;"));
+    } else if (!recTimeLabel_->text().isEmpty()) {
+        recTimeLabel_->clear();
+        recTimeLabel_->setStyleSheet(QStringLiteral("padding:0 4px;"));
     }
     level_->setLevel(engine_->inputPeak());
+    // Xrun: 0 — зелёный, >0 — красный (внимание).
     const auto xruns = engine_->xrunCount();
-    xrunLabel_->setText(xruns
-                            ? QStringLiteral("Xrun: %1").arg(xruns)
-                            : QStringLiteral("Xrun: 0"));
+    xrunLabel_->setText(QStringLiteral("Xrun: %1").arg(xruns));
+    xrunLabel_->setStyleSheet(xruns
+                                  ? QStringLiteral("color:#ff6b6b; font-weight:bold; padding:0 4px;")
+                                  : QStringLiteral("color:#6bd18b; padding:0 4px;"));
     timeline_->tick();
 }
 
