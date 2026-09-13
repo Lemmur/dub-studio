@@ -40,20 +40,27 @@ void ClipStore::peaksForRange(const Clip& clip, std::uint64_t fromSample, std::u
     maxs.assign(static_cast<std::size_t>(columns), 0.0f);
     if (columns <= 0 || toSample <= fromSample) return;
     const std::uint64_t total = clip.samples.size();
-    toSample = std::min<std::uint64_t>(toSample, total);
-    if (fromSample >= toSample) return;
+    if (fromSample >= total) return; // окно целиком правее конца клипа
+    // toSample НЕ зажимаем к длине клипа: колонки правее конца остаются
+    // нулями, волна занимает ровно свою длительность, а не растягивается
+    // на всю ширину окна (фикс «волны на всю дорожку» при живой записи).
 
     // Грубый zoom (>= blockSize сэмплов на колонку): по блочным пикам.
+    // Колонки за концом клипа остаются нулями — волна не «растягивается»
+    // на всё окно, а занимает ровно свою длительность.
     const double perColumn = static_cast<double>(toSample - fromSample) / columns;
     if (perColumn >= static_cast<double>(kPeakBlock)) {
+        const std::uint64_t nBlocks = clip.peaks.mins.size();
         for (int c = 0; c < columns; ++c) {
             const std::uint64_t b0 = (fromSample + static_cast<std::uint64_t>(c * perColumn)) / kPeakBlock;
+            if (b0 >= nBlocks) continue; // дальше конца клипа — тишина
             const std::uint64_t b1 =
-                std::max<std::uint64_t>(b0 + 1,
-                    (fromSample + static_cast<std::uint64_t>((c + 1) * perColumn) + kPeakBlock - 1) / kPeakBlock);
+                std::min<std::uint64_t>(nBlocks,
+                    std::max<std::uint64_t>(b0 + 1,
+                        (fromSample + static_cast<std::uint64_t>((c + 1) * perColumn) + kPeakBlock - 1) / kPeakBlock));
             float lo = clip.peaks.mins[static_cast<std::size_t>(b0)];
             float hi = clip.peaks.maxs[static_cast<std::size_t>(b0)];
-            for (std::uint64_t b = b0; b < b1 && b < clip.peaks.mins.size(); ++b) {
+            for (std::uint64_t b = b0 + 1; b < b1; ++b) {
                 lo = std::min(lo, clip.peaks.mins[static_cast<std::size_t>(b)]);
                 hi = std::max(hi, clip.peaks.maxs[static_cast<std::size_t>(b)]);
             }

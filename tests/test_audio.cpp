@@ -277,6 +277,32 @@ TEST_CASE("ClipStore: пики диапазона на грубом и тонк�
     CHECK(mins[0] == Approx(maxs[0]));
 }
 
+TEST_CASE("ClipStore: за концом клипа колонки нулевые (нет растягивания)", "[audio]") {
+    ClipStore store;
+    Clip c;
+    c.samples.assign(1024, 0.5f); // короткий клип на длинном окне
+    const std::size_t idx = store.addTake(std::move(c));
+    const auto& clip = store.takes()[idx];
+
+    std::vector<float> mins, maxs;
+    // Окно в 4 раза длиннее клипа, грубый zoom (1024 сэмпла/колонку).
+    ClipStore::peaksForRange(clip, 0, 16384, 16, mins, maxs);
+    REQUIRE(mins.size() == 16);
+    CHECK(maxs[0] == Approx(0.5f)); // первая колонка — данные
+    for (int c = 1; c < 16; ++c) {
+        CHECK(mins[static_cast<std::size_t>(c)] == 0.0f);
+        CHECK(maxs[static_cast<std::size_t>(c)] == 0.0f); // дальше — тишина
+    }
+
+    // Грубый zoom с окном 8192: 1024 сэмпла/колонку -> клип = ровно 1 колонка.
+    ClipStore::peaksForRange(clip, 0, 8192, 8, mins, maxs);
+    REQUIRE(mins.size() == 8);
+    CHECK(maxs[0] == Approx(0.5f));
+    for (int c = 1; c < 8; ++c) {
+        CHECK(maxs[static_cast<std::size_t>(c)] == 0.0f);
+    }
+}
+
 TEST_CASE("ClipStore: автоцвет различается", "[audio]") {
     CHECK(ClipStore::autoColor(0) != ClipStore::autoColor(1));
     CHECK(ClipStore::autoColor(0) == ClipStore::autoColor(10)); // цикл из 10
