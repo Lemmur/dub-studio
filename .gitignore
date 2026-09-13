@@ -1,0 +1,44 @@
+# Сборка
+build/
+out/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+installers/
+
+# IDE
+.vs/
+.idea/
+*.user
+*.suo
+*.opensdf
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Внешний SDK (скачивается вручную с сайта Steinberg, НЕ коммитить)
+third_party/asio_sdk/
+
+# Рабочие данные дубляжа
+MyDub/
+*.dubpack
+lines.db
+lines.db-wal
+lines.db-shm
+project.db
+project.db-wal
+project.db-shm
+audio_flac/
+cache/
+tmp/
+
+# Логи и временные файлы
+*.log
+*.tmp
+*.autosave
+
+# vcpkg / пакетные артефакты
+vcpkg_installed/

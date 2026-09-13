@@ -1,0 +1,15 @@
+* text=auto
+
+*.md       text
+*.json     text
+*.sql      text
+*.cpp      text
+*.h        text
+*.hpp      text
+*.cmake    text
+*.cmd      text
+*.bat      text
+*.py       text
+*.qss      text
+*.gitignore text
+*.gitattributes text

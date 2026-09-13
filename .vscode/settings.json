@@ -1,0 +1,12 @@
+{
+  "cmake.useCMakePresets": "always",
+  "cmake.configureOnOpen": false,
+  "cmake.buildBeforeRun": true,
+  "files.encoding": "utf8",
+  "files.associations": {
+    "*.sql": "sql"
+  },
+  "C_Cpp.default.cppStandard": "c++20",
+  "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+  "editor.formatOnSave": false
+}
