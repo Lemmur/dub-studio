@@ -1,8 +1,10 @@
-# UI-слой: MainWindow + модели таблиц (Qt Widgets).
+# UI-слой: MainWindow + модели таблиц + таймлайн (Qt Widgets).
 
 add_library(dubstudio_ui STATIC
   mainwindow.cpp
+  levelmeter.cpp
   linesmodel.cpp
+  timeline.cpp
 )
 
 target_include_directories(dubstudio_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

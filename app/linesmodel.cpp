@@ -3,6 +3,7 @@
 #include <sqlite3.h>
 
 #include <QColor>
+#include <QRegularExpression>
 
 namespace dubstudio {
 namespace {
@@ -10,6 +11,36 @@ namespace {
 QString columnText(sqlite3_stmt* stmt, int col) {
     const unsigned char* text = sqlite3_column_text(stmt, col);
     return text ? QString::fromUtf8(reinterpret_cast<const char*>(text)) : QString();
+}
+
+// FTS5 по умолчанию матчит только целые токены: "Coe" не найдёт "Coen".
+// Превращаем пользовательский ввод в префиксный запрос по каждому слову:
+//   "coe look"      -> "coe* look*"
+//   "speaker_name:Lunka" -> "speaker_name:Lunka*"
+// Фразы в кавычках, операторы AND/OR/NOT и слова, уже заканчивающиеся на *,
+// проходят без изменений.
+QString toFtsPrefixExpr(const QString& raw) {
+    static const QRegularExpression ws(QStringLiteral("\\s+"));
+    const QStringList parts = raw.split(ws, Qt::SkipEmptyParts);
+    QStringList out;
+    out.reserve(parts.size());
+    for (const QString& part : parts) {
+        QString p = part;
+        if (p.endsWith(QLatin1Char('*'))) {
+            out << p; // уже префиксный
+        } else if (p.startsWith(QLatin1Char('"'))) {
+            out << p; // фраза — как есть
+        } else if (p.compare(QLatin1String("AND"), Qt::CaseInsensitive) == 0 ||
+                   p.compare(QLatin1String("OR"), Qt::CaseInsensitive) == 0 ||
+                   p.compare(QLatin1String("NOT"), Qt::CaseInsensitive) == 0) {
+            out << p; // оператор FTS
+        } else if (const int colon = p.indexOf(QLatin1Char(':')); colon >= 0) {
+            out << p.left(colon + 1) + p.mid(colon + 1) + QLatin1Char('*');
+        } else {
+            out << p + QLatin1Char('*');
+        }
+    }
+    return out.join(QLatin1Char(' '));
 }
 
 } // namespace
@@ -21,7 +52,7 @@ void LinesSqlModel::setFilter(const QString& fileId, const QString& questId,
                               const QString& ftsQuery) {
     fileId_ = fileId;
     questId_ = questId;
-    ftsQuery_ = ftsQuery.trimmed();
+    ftsQuery_ = toFtsPrefixExpr(ftsQuery.trimmed());
     refresh();
 }
 
