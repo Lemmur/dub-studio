@@ -175,6 +175,12 @@ MainWindow::MainWindow(const QString& dbPath, QWidget* parent) : QMainWindow(par
         }
     }
 
+    // Раскладка интерфейса между запусками: геометрия окна + положение/размеры
+    // доков и тулбаров (objectName доков уже заданы — scenesDock/timelineDock).
+    QSettings geo;
+    restoreGeometry(geo.value(QStringLiteral("ui/geometry")).toByteArray());
+    restoreState(geo.value(QStringLiteral("ui/windowState")).toByteArray());
+
     tickTimer_ = new QTimer(this);
     tickTimer_->setInterval(33); // ~30 Гц: метры/playhead/живая волноформа
     connect(tickTimer_, &QTimer::timeout, this, &MainWindow::onTick);
@@ -182,6 +188,13 @@ MainWindow::MainWindow(const QString& dbPath, QWidget* parent) : QMainWindow(par
 }
 
 MainWindow::~MainWindow() = default;
+
+void MainWindow::closeEvent(QCloseEvent* event) {
+    QSettings s;
+    s.setValue(QStringLiteral("ui/geometry"), saveGeometry());
+    s.setValue(QStringLiteral("ui/windowState"), saveState());
+    QMainWindow::closeEvent(event);
+}
 
 void MainWindow::buildUi() {
     setWindowTitle(QStringLiteral("DubStudio — Фаза 2 (редактура)"));

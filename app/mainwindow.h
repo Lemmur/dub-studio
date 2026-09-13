@@ -38,6 +38,9 @@ public:
     explicit MainWindow(const QString& dbPath, QWidget* parent = nullptr);
     ~MainWindow() override;
 
+protected:
+    void closeEvent(QCloseEvent* event) override;
+
 private slots:
     void openDatabase();
     void importCombinedJson();
