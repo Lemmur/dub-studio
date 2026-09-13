@@ -105,6 +105,9 @@ void applyDarkTheme() {
     p.setColor(QPalette::HighlightedText, QColor(0xff, 0xff, 0xff));
     p.setColor(QPalette::Disabled, QPalette::Text, QColor(0x80, 0x80, 0x80));
     p.setColor(QPalette::Disabled, QPalette::ButtonText, QColor(0x80, 0x80, 0x80));
+    // QMenu красит неактивные пункты через WindowText: без явного цвета
+    // Windows рисует их «гравировкой» (белая тень под серым текстом).
+    p.setColor(QPalette::Disabled, QPalette::WindowText, QColor(0x78, 0x78, 0x78));
     p.setColor(QPalette::PlaceholderText, QColor(0x88, 0x88, 0x88));
     QApplication::setPalette(p);
 }
@@ -130,6 +133,7 @@ MainWindow::MainWindow(const QString& dbPath, QWidget* parent) : QMainWindow(par
     takeCounter_ = session.maxTakeNum;
     timeline_->syncTracks();
     connect(timeline_, &TimelineWidget::clipMoved, this, &MainWindow::onClipMoved);
+    connect(timeline_, &TimelineWidget::clipDeleteRequested, this, &MainWindow::onDeleteTake);
     if (session.takes > 0) {
         statusBar()->showMessage(
             QStringLiteral("Сессия восстановлена: тейков %1").arg(session.takes), 6000);
@@ -865,17 +869,32 @@ void MainWindow::onEditMenuAboutToShow() {
     setEnabled("actFitRefMenu", haveClip);
     setEnabled("actAlignMenu", haveClip);
 
+    // Человеческие имена команд для «Отменить/Повторить: …».
+    auto editName = [](const std::string& a) -> QString {
+        static const struct { const char* key; const char* ru; } kNames[] = {
+            {"edit.trim_silence", "трим тишины"}, {"edit.trim_range", "обрезка диапазона"},
+            {"edit.split", "разделение"},         {"edit.move", "перемещение"},
+            {"edit.align", "выравнивание"},       {"edit.gain", "усиление"},
+            {"edit.normalize", "нормализация"},   {"edit.silence", "тишина"},
+            {"edit.reverse", "реверс"},           {"edit.fade_in", "фейд-ин"},
+            {"edit.fade_out", "фейд-аут"},        {"edit.crossfade", "кроссфейд"},
+            {"edit.fit_ref", "Fit to Ref"},       {"edit.delete", "удаление тейка"},
+        };
+        for (const auto& n : kNames)
+            if (a == n.key) return QString::fromUtf8(n.ru);
+        return QString();
+    };
     if (auto* undo = findChild<QAction*>("actUndo")) {
         const std::string a = edits_->nextUndoAction();
-        undo->setText(a.empty() ? QStringLiteral("Отменить")
-                                : QStringLiteral("Отменить: %1").arg(
-                                      QString::fromStdString(a).section('.', 1)));
+        const QString ru = editName(a);
+        undo->setText(ru.isEmpty() ? QStringLiteral("Отменить")
+                                   : QStringLiteral("Отменить: %1").arg(ru));
     }
     if (auto* redo = findChild<QAction*>("actRedo")) {
         const std::string a = edits_->nextRedoAction();
-        redo->setText(a.empty() ? QStringLiteral("Повторить")
-                                : QStringLiteral("Повторить: %1").arg(
-                                      QString::fromStdString(a).section('.', 1)));
+        const QString ru = editName(a);
+        redo->setText(ru.isEmpty() ? QStringLiteral("Повторить")
+                                   : QStringLiteral("Повторить: %1").arg(ru));
     }
     // Кроссфейд: нужен перекрывающийся сосед у выбранного клипа.
     if (auto* cf = findChild<QAction*>("actCrossfade")) {
@@ -1144,6 +1163,24 @@ void MainWindow::onAlign() {
     cmd.takeId = id.toStdString();
     if (applyEdit(cmd))
         statusBar()->showMessage(QStringLiteral("Клип выровнен по началу референса"), 4000);
+}
+
+void MainWindow::onDeleteTake(int clipIndex) {
+    if (clipIndex < 0 || clipIndex >= static_cast<int>(store_->takes().size())) return;
+    const Clip& c = store_->takes()[static_cast<std::size_t>(clipIndex)];
+    const QString title = QString::fromStdString(c.title);
+    const QString id = QString::fromStdString(c.id);
+    const auto answer = QMessageBox::question(
+        this, QStringLiteral("Удаление тейка"),
+        QStringLiteral("Удалить тейк %1 полностью?\n(вернуть можно через Ctrl+Z)").arg(title),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (answer != QMessageBox::Yes) return;
+    EditCommand cmd;
+    cmd.type = EditType::DeleteTake;
+    cmd.takeId = id.toStdString();
+    if (applyEdit(cmd))
+        statusBar()->showMessage(
+            QStringLiteral("Тейк %1 удалён (Ctrl+Z вернёт)").arg(title), 5000);
 }
 
 void MainWindow::onClipMoved(int clipIndex, std::uint64_t newStart) {

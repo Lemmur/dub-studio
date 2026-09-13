@@ -185,6 +185,23 @@ void TimelineWidget::mousePressEvent(QMouseEvent* event) {
     const double x = static_cast<double>(event->position().x());
     const double y = static_cast<double>(event->position().y());
 
+    // Кнопка «✕» в хедере дорожки тейка: удаление тейка.
+    if (event->button() == Qt::LeftButton && x < kHeaderW) {
+        const int r = rowAt(static_cast<int>(y));
+        const int localY = static_cast<int>(y) - rowTop(r);
+        if (r >= 0 && r < static_cast<int>(rows_.size())) {
+            const Row& row = rows_[static_cast<std::size_t>(r)];
+            if (!row.locked && !row.isFixed && row.clipIndex >= 0 &&
+                localY >= 0 && localY < kRowH) {
+                const QRect close(kHeaderW - 28, rowTop(r) + kRowH / 2 - 11, 22, 22);
+                if (close.contains(static_cast<int>(x), static_cast<int>(y))) {
+                    emit clipDeleteRequested(row.clipIndex);
+                    return;
+                }
+            }
+        }
+    }
+
     // Панорама: средняя кнопка или Alt+ЛКМ в любом месте полотна.
     if (event->button() == Qt::MiddleButton ||
         (event->button() == Qt::LeftButton && (event->modifiers() & Qt::AltModifier))) {
@@ -429,6 +446,14 @@ void TimelineWidget::paintEvent(QPaintEvent*) {
             p.setPen(QColor(0x70, 0x70, 0x70));
             p.drawText(QRect(20, y0, kHeaderW - 24, kRowH),
                        Qt::AlignBottom | Qt::AlignLeft, QStringLiteral("locked"));
+        } else if (!row.isFixed && row.clipIndex >= 0) {
+            // Кнопка удаления тейка «✕» справа в хедере дорожки.
+            const QRect close(kHeaderW - 28, y0 + kRowH / 2 - 11, 22, 22);
+            p.setPen(QPen(QColor(0x8a, 0x8a, 0x8a), 2));
+            p.drawLine(close.left() + 6, close.top() + 6, close.right() - 6, close.bottom() - 6);
+            p.drawLine(close.right() - 6, close.top() + 6, close.left() + 6, close.bottom() - 6);
+            p.setPen(QPen(QColor(0x55, 0x55, 0x55), 1));
+            p.drawRect(close);
         }
 
         // Полотно волны.

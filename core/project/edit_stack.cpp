@@ -332,6 +332,15 @@ std::int64_t EditStack::apply(const EditCommand& cmd) {
         after.fadeOutSamples = 0; // кроссфейд сам управляет амплитудой
         break;
     }
+    case EditType::DeleteTake: {
+        // Удаление тейка целиком: клип уходит в state.removed (undo вернёт
+        // его в состоянии на момент удаления), строка takes удаляется.
+        action = "edit.delete";
+        removed = before;
+        hasRemoved = true;
+        samplesChanged = false; // wav унаследуем, отдельный снапшот не нужен
+        break;
+    }
     case EditType::FitToRef: {
         action = "edit.fit_ref";
         sqlite3* h = db_.handle();
@@ -616,6 +625,13 @@ bool EditStack::undo() {
         restored.startSample = 0;
         restored.gainDb = 0.0;
         restored.fadeInSamples = restored.fadeOutSamples = 0;
+    }
+    // DeleteTake: строки takes уже нет (удалена самой командой) — берём
+    // клип из снапшота удаления state.removed (кроссфейд сюда не попадает:
+    // у него primary-строка в takes остаётся).
+    if (restoredWav.empty() && state.contains("removed")) {
+        restored = clipFromJson(state["removed"]);
+        restoredWav = state["removed"].value("wav", std::string());
     }
     if (restoredWav.empty()) return false;
     loadSamples(restoredWav, restored);

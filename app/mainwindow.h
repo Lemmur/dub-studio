@@ -70,7 +70,8 @@ private slots:
     void onClipMoved(int clipIndex, std::uint64_t newStart);
     void onProjectSettings();
     void onAutosaveTick();
-    void onTableLineChanged(); // фильтр таймлайна по выбранной реплике
+    void onTableLineChanged();  // фильтр таймлайна по выбранной реплике
+    void onDeleteTake(int clipIndex); // кнопка «✕» в хедере дорожки
 
 private:
     void buildUi();

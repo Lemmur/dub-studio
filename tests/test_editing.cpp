@@ -636,6 +636,39 @@ TEST_CASE("Timeline: курсор стабилен при click/release/dblclick
     QApplication::sendEvent(&w, &ctrlUp);
 }
 
+TEST_CASE("EditStack: удаление тейка целиком, undo/redo и рестарт", "[edit]") {
+    TestProject p;
+    p.addRecordedTake();
+    REQUIRE(p.store->takes().size() == 1);
+
+    EditCommand c = p.cmd(EditType::DeleteTake);
+    REQUIRE(p.edits->apply(c) > 0);
+    CHECK(p.store->takes().empty());
+    CHECK(p.db->scalarInt("SELECT COUNT(*) FROM takes;") == 0);
+
+    // Undo возвращает тейк в состоянии на момент удаления.
+    REQUIRE(p.edits->undo());
+    REQUIRE(p.store->takes().size() == 1);
+    CHECK(p.db->scalarInt("SELECT COUNT(*) FROM takes;") == 1);
+    CHECK(p.store->takes()[0].samples.size() == 48000);
+
+    // Redo снова удаляет.
+    REQUIRE(p.edits->redo());
+    CHECK(p.store->takes().empty());
+    CHECK(p.db->scalarInt("SELECT COUNT(*) FROM takes;") == 0);
+
+    // Рестарт: удалённый тейк не воскресает, но undo его ещё возвращает.
+    p.edits.reset();
+    p.store.reset();
+    p.db.reset();
+    p.db = std::make_unique<Database>(p.dbPath.string());
+    p.store = std::make_unique<ClipStore>();
+    p.edits = std::make_unique<EditStack>(*p.db, *p.store, p.myDub.string());
+    CHECK(p.edits->loadSession().takes == 0);
+    REQUIRE(p.edits->undo());
+    REQUIRE(p.store->takes().size() == 1);
+}
+
 TEST_CASE("Автосейв: manifest.json и wal checkpoint", "[edit]") {
     TestProject p;
     p.addRecordedTake();

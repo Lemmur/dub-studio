@@ -51,6 +51,8 @@ signals:
     void infoChanged(const QString& info); // текущий zoom/позиция в статус-бар
     // Пользователь отпустил drag-move клипа: MainWindow применяет команду Move.
     void clipMoved(int clipIndex, std::uint64_t newStartSample);
+    // Кнопка «✕» в хедере дорожки тейка: MainWindow применяет DeleteTake.
+    void clipDeleteRequested(int clipIndex);
     void selectionChanged();
 
 protected:

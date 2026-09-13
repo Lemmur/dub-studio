@@ -25,6 +25,7 @@ enum class EditType {
     FadeOut,     // фейд-аут от from до конца
     Crossfade,   // слить takeId + takeId2 с equal-power кроссфейдом
     FitToRef,    // WSOLA-растяжение до lines.ref_duration_ms реплики тейка
+    DeleteTake,  // удалить тейк целиком (undo восстанавливает)
 };
 
 struct EditCommand {
