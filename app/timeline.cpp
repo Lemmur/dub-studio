@@ -289,7 +289,12 @@ void TimelineWidget::mouseReleaseEvent(QMouseEvent* event) {
 }
 
 void TimelineWidget::mouseDoubleClickEvent(QMouseEvent* event) {
-    if (event->button() == Qt::LeftButton) {
+    // «Вписать всё» — ТОЛЬКО по верхней линейке. Двойной клик по дорожке
+    // нельзя: серия быстрых установок курсора распознаётся как dblclick,
+    // и сброс вида (viewStart=0 + зум) «уносил» только что поставленный
+    // курсор — выглядело как «курсор улетает в нулевое положение».
+    if (event->button() == Qt::LeftButton &&
+        static_cast<double>(event->position().y()) < kRulerH) {
         // Вписать в окно КОНТЕНТ (край самого позднего клипа), а не канву-минимум
         // 30 с: короткий тейк не должен занимать десятую часть окна.
         double content = 0.0;
