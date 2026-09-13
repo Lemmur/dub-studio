@@ -209,17 +209,9 @@ void TimelineWidget::mousePressEvent(QMouseEvent* event) {
         return;
     }
 
-    // Верхняя линейка ИЛИ мини-линейка над дорожкой: установка курсора.
-    // Мини-линейки прямо у волны — не надо тянуться к самому верху окна.
-    if (y < kRulerH || inMiniRuler(static_cast<int>(y))) {
-        setCursorAt(x);
-        draggingCursor_ = true; // зажатой кнопкой можно довести точно
-        return;
-    }
-
-    // Клик по клипу: выбрать и начать drag-move.
+    // Ctrl+ЛКМ по клипу: выбрать и ПЕРЕМЕЩАТЬ (drag-move).
     const int hit = clipHit(x, y);
-    if (hit >= 0) {
+    if (hit >= 0 && (event->modifiers() & Qt::ControlModifier)) {
         selected_ = hit;
         movingClip_ = true;
         movePressX_ = x;
@@ -230,18 +222,47 @@ void TimelineWidget::mousePressEvent(QMouseEvent* event) {
         return;
     }
 
-    // Пустое место дорожки: КУРСОР (как в Audacity/Cubase), не панорама.
+    // Верхняя линейка ИЛИ мини-линейка над дорожкой: установка курсора.
+    if (y < kRulerH || inMiniRuler(static_cast<int>(y))) {
+        setCursorAt(x);
+        cursorPress_ = true;  // зажатой кнопкой можно довести точно
+        selecting_ = false;
+        rangeRow_ = -1;       // с линейки выделение «на все дорожки»
+        pressX_ = x;
+        return;
+    }
+
+    // ЛКМ по клипу (без Ctrl): просто выбор.
+    if (hit >= 0) {
+        selected_ = hit;
+        update();
+        emit selectionChanged();
+        return;
+    }
+
+    // Пустое место дорожки: press = курсор; drag дальше 2px = ВЫДЕЛЕНИЕ
+    // диапазона по этой дорожке (анкер в точке нажатия).
     if (x > kHeaderW) {
         setCursorAt(x);
-        draggingCursor_ = true;
+        cursorPress_ = true;
+        selecting_ = false;
+        rangeRow_ = rowAt(static_cast<int>(y));
+        pressX_ = x;
     }
 }
 
 void TimelineWidget::mouseMoveEvent(QMouseEvent* event) {
     const double x = static_cast<double>(event->position().x());
-    // Тянем курсор зажатой ЛКМ: точная доводка прямо по волне.
-    if (draggingCursor_ && !movingClip_) {
+    // ЛКМ на дорожке: до 2px — точная доводка курсора (анкер идёт за ним),
+    // дальше — выделение диапазона: курсор тянется, анкер стоит в точке press.
+    if (cursorPress_ && !movingClip_) {
         cursorSample_ = sampleAtX(x);
+        if (!selecting_ && std::fabs(x - pressX_) > 2.0) {
+            selecting_ = true;
+        }
+        if (!selecting_) {
+            anchorSample_ = cursorSample_;
+        }
         update();
         return;
     }
@@ -278,7 +299,8 @@ void TimelineWidget::mouseReleaseEvent(QMouseEvent* event) {
         }
         return;
     }
-    draggingCursor_ = false;
+    cursorPress_ = false;
+    selecting_ = false;
     dragging_ = false;
     setCursor(Qt::ArrowCursor);
 }
@@ -514,7 +536,8 @@ void TimelineWidget::paintEvent(QPaintEvent*) {
     p.setPen(QColor(0x44, 0x44, 0x44));
     p.drawLine(kHeaderW, 0, kHeaderW, height());
 
-    // --- Диапазон (Shift+клик), поверх дорожек ---
+    // --- Диапазон: заливка ТОЛЬКО на дорожке, где начали выделение;
+    // --- границы — сквозные через все дорожки (видно контекст). ---
     std::uint64_t rf, rt;
     if (hasRange(rf, rt)) {
         const double x0d = kHeaderW +
@@ -524,8 +547,13 @@ void TimelineWidget::paintEvent(QPaintEvent*) {
         const int rx0 = std::max(kHeaderW, static_cast<int>(x0d));
         const int rx1 = std::min(width(), static_cast<int>(x1d) + 1);
         if (rx1 > rx0) {
-            p.fillRect(rx0, kRulerH, rx1 - rx0, height() - kRulerH,
-                       QColor(0xff, 0xd7, 0x60, 26));
+            if (rangeRow_ >= 0 && rangeRow_ < static_cast<int>(rows_.size())) {
+                const int ry0 = rowTop(rangeRow_);
+                p.fillRect(rx0, ry0, rx1 - rx0, kRowH, QColor(0xff, 0xd7, 0x60, 26));
+            } else {
+                p.fillRect(rx0, kRulerH, rx1 - rx0, height() - kRulerH,
+                           QColor(0xff, 0xd7, 0x60, 26));
+            }
             p.setPen(QColor(0xff, 0xd7, 0x60, 120));
             p.drawLine(rx0, kRulerH, rx0, height());
             p.drawLine(rx1 - 1, kRulerH, rx1 - 1, height());

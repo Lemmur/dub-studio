@@ -580,17 +580,34 @@ TEST_CASE("Timeline: курсор стабилен при click/release/dblclick
         QApplication::sendEvent(&w, &ev);
     };
 
-    // y=120 — полотно пустой дорожки (Track 1): клик = курсор.
+    // y=120 — полотно пустой дорожки (Track 1).
+    // 1) Клик без движения: курсор; «дрожание» до 2px — точная доводка, не диапазон.
     pressAt(600, 120);
     CHECK(w.cursorSample() == sampleAt(600));
-    // «Держу минуту» с мелким дрожанием руки.
-    for (int i = 0; i < 50; ++i) moveTo(600 + (i % 5), 120);
-    const auto before = w.cursorSample();
-    CHECK(before == sampleAt(604)); // последний move
-    releaseAt(604, 120);
-    CHECK(w.cursorSample() == before); // << РЕГРЕССИЯ: не улетает в 0
+    moveTo(601, 120);
+    releaseAt(601, 120);
+    std::uint64_t f = 0, t = 0;
+    CHECK(w.cursorSample() == sampleAt(601));
+    CHECK_FALSE(w.hasRange(f, t));
+    CHECK(w.cursorSample() != 0); // << РЕГРЕССИЯ setCursor: не улетает в 0
 
-    // Серия быстрых кликов (double click по дорожке) — вид/курсор не сбрасывается.
+    // 2) Drag по дорожке дальше 2px = выделение диапазона (анкер в точке press).
+    pressAt(700, 120);
+    moveTo(750, 120);
+    moveTo(900, 120);
+    CHECK(w.hasRange(f, t));
+    CHECK(f == sampleAt(700));
+    CHECK(t == sampleAt(900));
+    releaseAt(900, 120);
+    CHECK(w.hasRange(f, t)); // выделение живёт после отпускания
+
+    // 3) Одиночный клик схлопывает диапазон в курсор.
+    pressAt(650, 120);
+    releaseAt(650, 120);
+    CHECK_FALSE(w.hasRange(f, t));
+    CHECK(w.cursorSample() == sampleAt(650));
+
+    // 4) Серия быстрых кликов (double click по дорожке) — курсор не сбрасывается.
     pressAt(700, 120);
     releaseAt(700, 120);
     pressAt(700, 120);
@@ -598,14 +615,25 @@ TEST_CASE("Timeline: курсор стабилен при click/release/dblclick
     releaseAt(700, 120);
     CHECK(w.cursorSample() == sampleAt(700));
 
-    // Shift+клик правее — диапазон.
+    // 5) Shift+клик правее — диапазон от текущего курсора.
     QMouseEvent shift(QEvent::MouseButtonPress, QPointF(900, 120), QPointF(900, 120),
                       Qt::LeftButton, Qt::LeftButton, Qt::ShiftModifier);
     QApplication::sendEvent(&w, &shift);
-    std::uint64_t f = 0, t = 0;
     CHECK(w.hasRange(f, t));
     CHECK(f == sampleAt(700));
     CHECK(t == sampleAt(900));
+
+    // 6) Ctrl+ЛКМ по клипу = выбор без установки курсора; ЛКМ по клипу — тоже выбор.
+    // Клип занимает [150, 150+96000/512=337] на дорожке TAKE (y: 176..240).
+    const auto cursorBefore = w.cursorSample();
+    QMouseEvent ctrl(QEvent::MouseButtonPress, QPointF(200, 200), QPointF(200, 200),
+                     Qt::LeftButton, Qt::LeftButton, Qt::ControlModifier);
+    QApplication::sendEvent(&w, &ctrl);
+    CHECK(w.selectedClip() == 0);
+    CHECK(w.cursorSample() == cursorBefore); // клип не двигал курсор
+    QMouseEvent ctrlUp(QEvent::MouseButtonRelease, QPointF(200, 200), QPointF(200, 200),
+                       Qt::LeftButton, Qt::NoButton, Qt::ControlModifier);
+    QApplication::sendEvent(&w, &ctrlUp);
 }
 
 TEST_CASE("Автосейв: manifest.json и wal checkpoint", "[edit]") {

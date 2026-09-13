@@ -90,7 +90,12 @@ private:
 
     bool dragging_ = false;   // панорама (СКМ или Alt+ЛКМ)
     int dragLastX_ = 0;
-    bool draggingCursor_ = false; // тянем курсор зажатой ЛКМ (точная установка)
+    // ЛКМ по дорожке: press = курсор; drag дальше 2px = выделение диапазона
+    // (анкер стоит в точке нажатия); без движения = обычная установка курсора.
+    bool cursorPress_ = false;
+    bool selecting_ = false;
+    double pressX_ = 0.0;
+    int rangeRow_ = -1; // дорожка, где начато выделение (-1 = все, напр. с линейки)
 
     // Фаза 2
     int selected_ = -1;              // выбранный клип (индекс ClipStore)
