@@ -580,6 +580,22 @@ void MainWindow::onRecord() {
     }
 
     ++takeCounter_;
+    // Гарантия уникальности take_id: счётчик после рестарта берётся из БД,
+    // но строки могли остаться без WAV (MyDub удалён) — сверяемся с базой.
+    auto takeIdExists = [this](const QString& id) {
+        sqlite3_stmt* st = nullptr;
+        bool exists = false;
+        if (sqlite3_prepare_v2(db_->handle(), "SELECT 1 FROM takes WHERE take_id=?1;", -1,
+                               &st, nullptr) == SQLITE_OK) {
+            sqlite3_bind_text(st, 1, id.toUtf8().constData(), -1, SQLITE_TRANSIENT);
+            exists = sqlite3_step(st) == SQLITE_ROW;
+            sqlite3_finalize(st);
+        }
+        return exists;
+    };
+    while (takeIdExists(QStringLiteral("take_%1_%2").arg(takeCounter_).arg(hash.left(8)))) {
+        ++takeCounter_;
+    }
     Clip clip;
     clip.id = QStringLiteral("take_%1_%2").arg(takeCounter_).arg(hash.left(8)).toStdString();
     clip.title = QStringLiteral("TAKE-%1").arg(takeCounter_, 2, 10, QLatin1Char('0')).toStdString();

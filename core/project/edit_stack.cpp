@@ -848,6 +848,11 @@ EditStack::SessionInfo EditStack::loadSession() {
 
     int loaded = 0;
     for (const auto& r : rows) {
+        // Номер тейка считаем по СТРОКЕ БД, а не по загруженному клипу:
+        // если WAV недоступен (MyDub удалён/другая папка), клип пропускаем,
+        // но счётчик обязан учесть его номер — иначе новый тейк сгенерирует
+        // коллизию take_id (UNIQUE constraint при записи).
+        info.maxTakeNum = std::max(info.maxTakeNum, takeNumFromId(r.id));
         const std::string stateJson = scalarText1(
             h, "SELECT state_json FROM undo_log"
                " WHERE scope='edit' AND take_id=?1 AND undone=0"
@@ -880,7 +885,6 @@ EditStack::SessionInfo EditStack::loadSession() {
         }
         ClipStore::rebuildPeaks(c);
         store_.takes().push_back(std::move(c));
-        info.maxTakeNum = std::max(info.maxTakeNum, takeNumFromId(r.id));
         ++loaded;
     }
     info.takes = loaded;

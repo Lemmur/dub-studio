@@ -502,6 +502,23 @@ TEST_CASE("Схема: миграция undo_log старой базы (Фаза
     REQUIRE(p.edits->undo());
 }
 
+TEST_CASE("EditStack: maxTakeNum учитывает тейки без WAV (нет коллизии take_id)", "[edit]") {
+    TestProject p;
+    p.addRecordedTake();
+    // Сценарий из чек-листа: удалён MyDub, база осталась. Клип не загрузится,
+    // но номер строки takes обязан учесться в maxTakeNum — иначе после рестарта
+    // новый тейк сгенерирует занятый take_id -> UNIQUE constraint failed.
+    p.edits.reset();
+    p.store.reset();
+    std::error_code ec;
+    fs::remove_all(p.myDub, ec);
+    p.store = std::make_unique<ClipStore>();
+    p.edits = std::make_unique<EditStack>(*p.db, *p.store, p.myDub.string());
+    const auto s = p.edits->loadSession();
+    CHECK(s.takes == 0);      // WAV нет — клип пропущен, сессия не упала
+    CHECK(s.maxTakeNum == 1); // номер строки учтён -> следующий тейк будет №2
+}
+
 TEST_CASE("Автосейв: manifest.json и wal checkpoint", "[edit]") {
     TestProject p;
     p.addRecordedTake();
