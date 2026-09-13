@@ -235,6 +235,8 @@ void MainWindow::buildUi() {
     layout->addWidget(table_, 1);
     setCentralWidget(central);
 
+    connectTableSelection();
+
     connect(search_, &QLineEdit::textChanged, this, &MainWindow::onSearchChanged);
 
     // --- Нижний док: таймлайн Track 0/1/N (Фаза 1) ---
@@ -614,14 +616,18 @@ void MainWindow::onRecord() {
 
 void MainWindow::onPlay() {
     if (engine_->isRecording()) return;
-    if (store_->takes().empty()) {
-        statusBar()->showMessage(QStringLiteral("Нет тейков для плейбека"), 3000);
-        return;
+    // Микс ВИДИМЫХ клипов (фильтр по реплике): позиции/гейны/фейды (PLAN.md 6.4).
+    std::vector<Clip> visible;
+    const std::string& filter = timeline_->lineFilter();
+    for (const auto& t : store_->takes()) {
+        if (filter.empty() || t.wemHash == filter) visible.push_back(t);
     }
-    // Фаза 2: играем микс всех клипов (позиции/гейны/фейды, PLAN.md 6.4).
-    const std::vector<float> mix = renderMix(store_->takes());
+    const std::vector<float> mix = renderMix(visible);
     if (mix.empty()) {
-        statusBar()->showMessage(QStringLiteral("Нет тейков для плейбека"), 3000);
+        statusBar()->showMessage(
+            filter.empty() ? QStringLiteral("Нет тейков для плейбека")
+                           : QStringLiteral("У этой реплики ещё нет тейков"),
+            3000);
         return;
     }
     engine_->play(mix.data(), mix.size());
@@ -1202,6 +1208,17 @@ void MainWindow::onAutosaveTick() {
     }
 }
 
+// Фильтр таймлайна по выбранной реплике: показываем только её тейки
+// (все тейки остаются в ClipStore и в undo-истории).
+void MainWindow::connectTableSelection() {
+    connect(table_->selectionModel(), &QItemSelectionModel::currentRowChanged, this,
+            &MainWindow::onTableLineChanged);
+}
+
+void MainWindow::onTableLineChanged() {
+    timeline_->setLineFilter(currentWemHash().toStdString());
+}
+
 void MainWindow::openDatabase() {
     QString path = QFileDialog::getSaveFileName(this, QStringLiteral("Открыть или создать базу"),
                                                  dbPath_, QStringLiteral("SQLite (*.db)"),
@@ -1214,6 +1231,7 @@ void MainWindow::openDatabase() {
         delete model_;
         model_ = new LinesSqlModel(*db_, table_);
         table_->setModel(model_);
+        connectTableSelection(); // у новой модели свой selectionModel
         // Фаза 2: стек правок смотрит на новую БД, тейки перезагружаем.
         store_ = std::make_unique<ClipStore>();
         edits_ = std::make_unique<EditStack>(*db_, *store_, myDubDir_.toStdString());

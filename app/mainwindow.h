@@ -70,12 +70,14 @@ private slots:
     void onClipMoved(int clipIndex, std::uint64_t newStart);
     void onProjectSettings();
     void onAutosaveTick();
+    void onTableLineChanged(); // фильтр таймлайна по выбранной реплике
 
 private:
     void buildUi();
     void buildMenu();
     void buildTransport();
     void buildEditMenuActions(); // Правка + хоткеи S/Ctrl+Z/Ctrl+Y (Фаза 2)
+    void connectTableSelection(); // selectionModel пересоздаётся со сменой модели
     void rebuildTree();
     void reloadStats();
     void finalizeTake();
