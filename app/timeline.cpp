@@ -5,6 +5,7 @@
 #include "dubstudio/audio_engine.h"
 #include "dubstudio/clip_store.h"
 
+#include <QContextMenuEvent>
 #include <QFont>
 #include <QMouseEvent>
 #include <QPainter>
@@ -215,6 +216,13 @@ void TimelineWidget::mousePressEvent(QMouseEvent* event) {
     // Shift+клик ГДЕ УГОДНО: конец диапазона (курсор двигается, анкер стоит).
     if (event->modifiers() & Qt::ShiftModifier) {
         cursorSample_ = sampleAtX(x);
+        // Выделение по дорожке тейка — сразу выбираем этот тейк.
+        const int r = rowAt(static_cast<int>(y));
+        if (r >= 0 && r < static_cast<int>(rows_.size()) &&
+            rows_[static_cast<std::size_t>(r)].clipIndex >= 0) {
+            selected_ = rows_[static_cast<std::size_t>(r)].clipIndex;
+            emit selectionChanged();
+        }
         update();
         std::uint64_t f, t;
         if (hasRange(f, t)) {
@@ -240,11 +248,22 @@ void TimelineWidget::mousePressEvent(QMouseEvent* event) {
     }
 
     // Верхняя линейка ИЛИ мини-линейка над дорожкой: установка курсора.
+    // Мини-линейка над дорожкой тейка сразу выбирает этот тейк.
     if (y < kRulerH || inMiniRuler(static_cast<int>(y))) {
         setCursorAt(x);
         cursorPress_ = true;  // зажатой кнопкой можно довести точно
         selecting_ = false;
-        rangeRow_ = -1;       // с линейки выделение «на все дорожки»
+        rangeRow_ = -1;       // с верхней линейки выделение «на все дорожки»
+        if (inMiniRuler(static_cast<int>(y))) {
+            const int r = rowAt(static_cast<int>(y));
+            if (r >= 0 && r < static_cast<int>(rows_.size())) {
+                rangeRow_ = r;
+                if (rows_[static_cast<std::size_t>(r)].clipIndex >= 0) {
+                    selected_ = rows_[static_cast<std::size_t>(r)].clipIndex;
+                    emit selectionChanged();
+                }
+            }
+        }
         pressX_ = x;
         return;
     }
@@ -258,14 +277,33 @@ void TimelineWidget::mousePressEvent(QMouseEvent* event) {
     }
 
     // Пустое место дорожки: press = курсор; drag дальше 2px = ВЫДЕЛЕНИЕ
-    // диапазона по этой дорожке (анкер в точке нажатия).
+    // диапазона по этой дорожке (анкер в точке нажатия). Дорожка тейка —
+    // тейк выбирается сразу (не нужно потом кликать по нему отдельно).
     if (x > kHeaderW) {
         setCursorAt(x);
         cursorPress_ = true;
         selecting_ = false;
         rangeRow_ = rowAt(static_cast<int>(y));
+        if (rangeRow_ >= 0 && rangeRow_ < static_cast<int>(rows_.size())) {
+            const int ci = rows_[static_cast<std::size_t>(rangeRow_)].clipIndex;
+            if (ci >= 0 && ci != selected_) {
+                selected_ = ci;
+                emit selectionChanged();
+            }
+        }
         pressX_ = x;
     }
+}
+
+// ПКМ внутри выделенного диапазона: контекстное меню правок (собирает MainWindow).
+void TimelineWidget::contextMenuEvent(QContextMenuEvent* event) {
+    std::uint64_t f, t;
+    if (!hasRange(f, t)) return;
+    const double x = event->pos().x();
+    if (x <= kHeaderW) return;
+    const std::uint64_t s = sampleAtX(x);
+    if (s < f || s > t) return;
+    emit rangeContextMenuRequested(event->globalPos());
 }
 
 void TimelineWidget::mouseMoveEvent(QMouseEvent* event) {

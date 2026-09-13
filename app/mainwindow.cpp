@@ -134,6 +134,8 @@ MainWindow::MainWindow(const QString& dbPath, QWidget* parent) : QMainWindow(par
     timeline_->syncTracks();
     connect(timeline_, &TimelineWidget::clipMoved, this, &MainWindow::onClipMoved);
     connect(timeline_, &TimelineWidget::clipDeleteRequested, this, &MainWindow::onDeleteTake);
+    connect(timeline_, &TimelineWidget::rangeContextMenuRequested, this,
+            &MainWindow::onRangeContextMenu);
     if (session.takes > 0) {
         statusBar()->showMessage(
             QStringLiteral("Сессия восстановлена: тейков %1").arg(session.takes), 6000);
@@ -734,7 +736,10 @@ void MainWindow::finalizeTake() {
 
     liveTakeIndex_ = -1;
     timeline_->syncTracks();
+    // Выделение строки реплики переживает refresh (мы продолжаем с ней работать).
+    const QString keepHash = currentWemHash();
     model_->refresh();
+    restoreTableSelection(keepHash);
     markDirty(); // автосейв: появилась запись
     recTimeLabel_->setText(QString());
     statusBar()->showMessage(
@@ -1379,17 +1384,63 @@ void MainWindow::rebuildTree() {
     tree_->collapseAll();
 }
 
+// Вернуть выделение строки реплики по wem_hash после refresh/смены фильтра:
+// строка не слетает, пока пользователь сам не переключится в таблице.
+void MainWindow::restoreTableSelection(const QString& wemHash) {
+    if (wemHash.isEmpty() || !model_) return;
+    const int rows = model_->rowCount();
+    for (int i = 0; i < rows; ++i) {
+        if (model_->wemHashAt(i) == wemHash) {
+            const QModelIndex idx = model_->index(i, 0);
+            table_->setCurrentIndex(idx);
+            table_->scrollTo(idx, QAbstractItemView::PositionAtCenter);
+            return;
+        }
+    }
+}
+
+// ПКМ внутри выделенного диапазона на таймлайне: меню правок диапазона.
+void MainWindow::onRangeContextMenu(const QPoint& globalPos) {
+    const bool haveClip = !selectedTakeId().isEmpty();
+    QMenu menu(this);
+    auto addRange = [&](const QString& text, auto handler) {
+        QAction* a = menu.addAction(text);
+        a->setEnabled(haveClip);
+        connect(a, &QAction::triggered, this, handler);
+    };
+    addRange(QStringLiteral("Тишина в диапазоне"), &MainWindow::onSilence);
+    addRange(QStringLiteral("Реверс диапазона"), &MainWindow::onReverseRange);
+    addRange(QStringLiteral("Обрезать вне диапазона"), &MainWindow::onTrimRange);
+    menu.addSeparator();
+    addRange(QStringLiteral("Нормализовать…"), &MainWindow::onNormalize);
+    addRange(QStringLiteral("Усиление…"), &MainWindow::onGain);
+    menu.addSeparator();
+    addRange(QStringLiteral("Фейд-ин до курсора"), &MainWindow::onFadeIn);
+    addRange(QStringLiteral("Фейд-аут от курсора"), &MainWindow::onFadeOut);
+    addRange(QStringLiteral("Разделить по курсору"), &MainWindow::onSplit);
+    menu.addSeparator();
+    addRange(QStringLiteral("Fit to Ref"), &MainWindow::onFitToRef);
+    if (!haveClip) {
+        QAction* hint = menu.addAction(
+            QStringLiteral("Сначала выделите тейк (клик/выделение по его дорожке)"));
+        hint->setEnabled(false);
+    }
+    menu.exec(globalPos);
+}
+
 void MainWindow::onTreeSelection() {
+    const QString keepHash = currentWemHash();
     const QModelIndexList selected = tree_->selectionModel()->selectedIndexes();
     if (selected.isEmpty()) {
         model_->setFilter({}, {}, search_->text());
-        return;
+    } else {
+        const QModelIndex idx = selected.first();
+        const QString questId = idx.data(kRoleQuestId).toString();
+        const QString fileId = idx.data(kRoleFileId).toString();
+        // Выбрана сцена — фильтруем по ней; выбран файл — по файлу.
+        model_->setFilter(questId.isEmpty() ? fileId : QString(), questId, search_->text());
     }
-    const QModelIndex idx = selected.first();
-    const QString questId = idx.data(kRoleQuestId).toString();
-    const QString fileId = idx.data(kRoleFileId).toString();
-    // Выбрана сцена — фильтруем по ней; выбран файл — по файлу.
-    model_->setFilter(questId.isEmpty() ? fileId : QString(), questId, search_->text());
+    restoreTableSelection(keepHash);
 }
 
 void MainWindow::onSearchChanged() {

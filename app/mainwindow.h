@@ -72,6 +72,7 @@ private slots:
     void onAutosaveTick();
     void onTableLineChanged();  // фильтр таймлайна по выбранной реплике
     void onDeleteTake(int clipIndex); // кнопка «✕» в хедере дорожки
+    void onRangeContextMenu(const QPoint& globalPos); // ПКМ в выделенной зоне
 
 private:
     void buildUi();
@@ -79,6 +80,7 @@ private:
     void buildTransport();
     void buildEditMenuActions(); // Правка + хоткеи S/Ctrl+Z/Ctrl+Y (Фаза 2)
     void connectTableSelection(); // selectionModel пересоздаётся со сменой модели
+    void restoreTableSelection(const QString& wemHash); // выделение не слетает
     void rebuildTree();
     void reloadStats();
     void finalizeTake();

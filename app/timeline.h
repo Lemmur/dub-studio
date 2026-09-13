@@ -53,6 +53,8 @@ signals:
     void clipMoved(int clipIndex, std::uint64_t newStartSample);
     // Кнопка «✕» в хедере дорожки тейка: MainWindow применяет DeleteTake.
     void clipDeleteRequested(int clipIndex);
+    // ПКМ внутри выделенного диапазона: MainWindow показывает меню правок.
+    void rangeContextMenuRequested(const QPoint& globalPos);
     void selectionChanged();
 
 protected:
@@ -62,6 +64,7 @@ protected:
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;
+    void contextMenuEvent(QContextMenuEvent* event) override;
 
 private:
     struct Row {
