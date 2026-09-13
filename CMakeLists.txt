@@ -29,6 +29,35 @@ target_compile_definitions(sqlite3 PRIVATE
   SQLITE_OMIT_DEPRECATED
 )
 
+# --- RtAudio 6.0.1 (vendored) + ASIO-заголовки из комплекта ------------------
+# В third_party/rtaudio/rtaudio/include лежат заголовки ASIO 2.3 — внешний
+# ASIO SDK для сборки не нужен (см. docs/plans/phase-1-audio.md).
+# WASAPI собран как fallback (PLAN.md 6.1).
+add_library(rtaudio STATIC
+  third_party/rtaudio/rtaudio/RtAudio.cpp
+  third_party/rtaudio/rtaudio/include/asio.cpp
+  third_party/rtaudio/rtaudio/include/asiodrivers.cpp
+  third_party/rtaudio/rtaudio/include/asiolist.cpp
+  third_party/rtaudio/rtaudio/include/iasiothiscallresolver.cpp
+)
+target_include_directories(rtaudio
+  PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/rtaudio/rtaudio
+  PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/rtaudio/rtaudio/include
+)
+target_compile_definitions(rtaudio PRIVATE
+  __WINDOWS_ASIO__     # ASIO приоритетно
+  __WINDOWS_WASAPI__   # fallback (PLAN.md 6.1)
+)
+target_link_libraries(rtaudio
+  PUBLIC winmm ole32 oleaut32 uuid ksuser mfplat mfuuid wmcodecdspuuid
+)
+# Линкуем большие obj в отдельные секции, чтобы не раздувать exe.
+if(MSVC)
+  target_compile_options(rtaudio PRIVATE /bigobj)
+endif()
+
 # --- Встраивание schema.sql в бинарник ---------------------------------------
 file(READ ${CMAKE_CURRENT_SOURCE_DIR}/schema.sql DUBSTUDIO_SCHEMA_SQL)
 configure_file(
