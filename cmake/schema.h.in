@@ -1,0 +1,10 @@
+// Сгенерировано CMake из schema.sql — не редактировать вручную.
+#pragma once
+
+namespace dubstudio {
+
+inline constexpr char kSchemaSql[] = R"ds_sql(
+@DUBSTUDIO_SCHEMA_SQL@
+)ds_sql";
+
+} // namespace dubstudio
