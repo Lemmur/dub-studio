@@ -1,7 +1,7 @@
 # `DubStudio` — полный файл аналитики и проекта системы дубляжа
 
 > Единый консолидированный документ. Содержит все согласованные решения.
-> Масштаб: `1 проект = 1 игра`, формат `combined.json`, `42 файла / 2181 сцена / 39481 реплика`, `WEM Vorbis HQ`, `sound2wem`, `ASIO Focusrite`, `Windows`, `open-source`, `агентная разработка`.
+> Масштаб: `1 проект = 1 игра`, формат `combined.json`, `42 файла / 2181 сцена / 39481 реплика`, референсы `<hash>_en.wav` (конвертация `WEM->WAV` вручную), экспорт `WEM Vorbis HQ` через `sound2wem`, `ASIO Focusrite`, `Windows`, `open-source`, `агентная разработка`.
 
 ---
 
@@ -17,17 +17,17 @@
 |---|---|---|
 | 1 | Платформа | Только `Windows 10/11 x64` |
 | 2 | Масштаб | $N = 39481$ реплика, $2181$ сцена, $42$ файла, $T_{total} \approx 30\text{-}36$ часов |
-| 3 | Входной формат | `combined.json`: `{file_id: {quest_id: {guid: {en, ru, speaker_name, speaker_internal, dur}}}}` + файлы `<GUID>_en.wem` |
+| 3 | Входной формат | `combined.json`: `{file_id: {quest_id: {guid: {en, ru, speaker_name, speaker_internal, dur}}}}` + файлы `<hash>_en.wav` (конвертация из `.wem` вручную вне приложения) |
 | 4 | Запись | $1$ микрофон, `Focusrite USB ASIO`, частота проекта настраиваемая, `Direct Monitoring` есть, по умолчанию `OFF` |
 | 5 | Треки | `Track 0 REF-EN` locked + `Track 1 MASTER-RU` + `Track 2..N` тейки, цикличная запись, автоцвет |
 | 6 | Редактирование | Волноформа до сэмплов, `trim/split/move/fade/crossfade/gain/normalize/silence/reverse/time-stretch`, `Fit to Ref`, `Comp to Master`, `Undo/Redo` с открытия сессии |
-| 7 | `WEM` | `decode` через `vgmstream CLI`, `encode` через `sound2wem`, прямая подгрузка `.wem` в таймлайн |
+| 7 | `WEM` | `decode` не нужен: импорт готовых `<hash>_en.wav`; `encode` через `sound2wem`, прямая подгрузка `.wav` в таймлайн, `batch` |
 | 8 | Текст | Интерактивная `LLM`-адаптация, слоги + смычные + виземы, история `base / adapted / final` |
 | 9 | Очистка | `Offline` цепочка, `DeepFilterNet3` по умолчанию, пресеты под `8GB / 16GB VRAM` |
 | 10 | `ElevenLabs` | `STS` + `TTS`, клон голоса персонажа, обязательный кэш `sha256`, виджет кредитов |
 | 11 | Проект | Рабочая директория `MyDub/` + экспорт `.dubpack`, `FLAC + ZSTD-12 + AES-GCM`, `CAS`, инкрементальность |
 | 12 | Режимы | Только `online`, без фолбэков. `Batch` обязателен. Автосейв настраиваемый |
-| 13 | Лицензии | Только `open-source` в линковке. `ASIO SDK 2.3.4` уже скачан локально в `ASIO-SDK_2.3.4_2025-10-15/ASIOSDK` (dual license: Proprietary / GPLv3, не коммитить), `sound2wem` как внешний исходник, `vgmstream` как внешний `CLI` |
+| 13 | Лицензии | Только `open-source` в линковке. `ASIO SDK 2.3.4` уже скачан локально в `ASIO-SDK_2.3.4_2025-10-15/ASIOSDK` (dual license: Proprietary / GPLv3, не коммитить), `sound2wem` как внешний исходник |
 | 14 | Разработка | Агентные ИИ, `C++20 + Qt6 + Python sidecar`, модульность через плагины, фазы `0-9` строго по порядку |
 
 ### 1.3 Железо
@@ -77,7 +77,7 @@ C++ ядро <-- gRPC / ZeroMQ + JSON --> workers/python/
 
 | Задача | Инструмент | Тип интеграции |
 |---|---|---|
-| `WEM -> WAV` | `vgmstream CLI` | `subprocess`, проверен, читает `Vorbis HQ` |
+| `WEM -> WAV` | вручную, вне приложения | в ядро не интегрируется |
 | `WAV -> WEM` | `sound2wem` (`https://github.com/EternalLeo/sound2wem`) | сборка из исходников в `third_party/sound2wem`, вызов как `subprocess` |
 | `LLM cloud` | `OpenRouter API` | `REST`, `BaseURL + Key + Model` |
 | `LLM local` | `Ollama` | тот же интерфейс, `http://localhost:11434` |
@@ -112,14 +112,14 @@ C++ ядро <-- gRPC / ZeroMQ + JSON --> workers/python/
 +----------------------------------------------------------+
 | Python sidecar: DeepFilterNet3 | UVR | llm_proxy | RVC opt |
 +----------------------------------------------------------+
-| External CLI: vgmstream | sound2wem                        |
+| External CLI: sound2wem (encode only)                        |
 +----------------------------------------------------------+
 ```
 
 Поток одной реплики:
 
 ```text
-combined.json -> lines.db -> decode_wem Job -> FLAC CAS
+combined.json + <hash>_en.wav -> lines.db -> импорт WAV Job -> FLAC CAS
  -> REF-EN Track0 -> запись Take -> автоцвет RMS/ZCR/delta
  -> denoise offline -> STS/TTS ElevenLabs -> MASTER-RU
  -> Fit to Ref -> sound2wem encode -> валидация
@@ -170,7 +170,7 @@ public:
 
 - `L1 file_id`: $42$ ключа, например `q000_intro`, `sq708_ambrus`, `_uncovered_whispers`. Единица поставки и `batch`.
 - `L2 quest_id`: $2181$ сцена, например `cs_q000_1_opening`, `ambrus_whispers`.
-- `L3 GUID`: $39481$ реплика, `32-hex`, он же имя `<GUID>_en.wem`.
+- `L3 GUID`: $39481$ реплика, `32-hex` (он же `hash`), имя файла референса — `<hash>_en.wav` (получен ручной конвертацией из `<hash>_en.wem`).
 - `L4` поля: `en`, `ru`, `speaker_name`, `speaker_internal`, `dur` float в секундах.
 
 Особые кейсы:
@@ -382,41 +382,42 @@ Comp to Master   отправить выделение в MASTER-RU с крос�
 
 ---
 
-## 7. `WEM <-> WAV` на `vgmstream + sound2wem`
+## 7. Импорт `<hash>_en.wav` и экспорт `WEM` через `sound2wem`
+
+`WEM -> WAV` ядро НЕ выполняет: конвертация делается вручную вне приложения (любым проверенным декодером), один раз до старта работы. Ядро импортирует только готовые `<hash>_en.wav`.
 
 ```text
-<GUID>_en.wem -> vgmstream decode -> temp WAV float32 -> FLAC CAS
-vgmstream -m -> wem_probe_json {codec, sample_rate, channels, vorbis_quality}
-drop .wem в таймлайн -> фоновый decode Job -> клип
+<hash>_en.wav -> libsndfile / dr_wav -> float32 -> FLAC CAS
+probe WAV (libsndfile) -> wem_probe_json {codec, sample_rate, channels, bits}
+drop .wav в таймлайн -> фоновый import Job -> клип
 MASTER-RU FLAC -> SoXR resample -> sound2wem encode -> валидация
 Batch окно: папка -> очередь jobs -> лог
 ```
 
-Пример `wem_probe_json`:
+Пример `wem_probe_json` (probe импортированного WAV, имя колонки в БД сохранено):
 
 ```json
 {
-  "codec": "vorbis",
-  "quality": "high",
-  "sample_rate": 44100,
+  "source": "wav",
+  "codec": "pcm_s24le",
+  "sample_rate": 48000,
   "channels": 1,
-  "encoder": "sound2wem",
-  "args": ["--vorbis-quality", "6"]
+  "duration_ms": 1861
 }
 ```
 
-Точные `args` агент снимает из `sound2wem --help` и фиксирует в `docs/wem_params.md`.
+Точные `args` кодера агент снимает из `sound2wem --help` и фиксирует в `docs/wem_params.md`.
 
-Валидация encode:
+Валидация encode без внешнего декодера: читаем длительность из заголовка полученного `WEM` (`fmt`-чанк), полный decode не нужен:
 
 ```text
-WAV -> WEM(sound2wem) -> WAV(vgmstream) -> |T_new - T_ref| < 20ms
+WAV -> WEM(sound2wem) -> parse WEM header -> |T_new - T_ref| < 20ms
 ```
 
 <details>
 <summary>Почему именно эта связка</summary>
 
-`vgmstream` не умеет кодировать обратно. Самописный `Vorbis -> WEM` даст файл который движок отвергнет. `Wwise CLI` проприетарный и неудобен для агентов. `sound2wem` — открытый кодер, собирается из исходников, параметры задаются явно и сверяются с `probe`.
+`WEM -> WAV` вынесен из ядра: конвертация нужна один раз и делается вручную, ядро не тащит `GPL`-декодер и лишний `subprocess`. Самописный `Vorbis -> WEM` даст файл который движок отвергнет. `Wwise CLI` проприетарный и неудобен для агентов. `sound2wem` — открытый кодер, собирается из исходников, параметры задаются явно. Для проверки результата достаточно длительности из заголовка `WEM`.
 </details>
 
 ---
@@ -514,7 +515,7 @@ struct Job {
 - Воркеры: `N = CPU_threads` для локальных, $M = 4$ для `ElevenLabs` против `rate limit`.
 - Дедупликация по `cache_key`.
 - Скоуп: `file_id / quest_id / speaker / выделенные`.
-- Цепочка: `[decode_wem] -> [denoise] -> [STS voice] -> [Fit to Ref] -> [encode_wem]`.
+- Цепочка: `[import_wav] -> [denoise] -> [STS voice] -> [Fit to Ref] -> [encode_wem]`.
 - Оценка: `denoise 0.3x realtime` → $30$ часов $\approx 9$-$10$ часов `GPU` по файлам за ночь. `ElevenLabs 1000 реплик` $\approx 1$ час. Целиком $39481$ за ночь через `API` нереально ($\approx 33$ часа), гнать по одному `file_id` ($\approx 900$ реплик).
 
 ---
@@ -567,7 +568,7 @@ MyDub.dubpack           экспорт для переноса
 | **0. Скелет** | `CMake + Qt` докинг, `schema.sql`, импорт `combined.json`, дерево `файл->сцена->реплики`, `sound2wem` сборка + `docs/wem_params.md` | Импорт $39481$ $<3$ сек, скролл без лагов |
 | **1. Аудио** | `RtAudio + ASIO Focusrite`, запись моно, `Track 0/1/N`, волноформа + zoom, метроном, мониторинг | Запись $10$ сек без `xrun` |
 | **2. Редактура** | `trim/split/move/fade/crossfade/gain/normalize/silence/reverse`, `RubberBand Fit`, `Align`, `Undo` + автосейв | Откат до старта после рестарта |
-| **3. `WEM`** | `decode Job vgmstream`, прямая подгрузка `.wem`, `probe` в БД, `encode sound2wem batch`, валидация | `WAV->WEM->WAV`, $\Delta T < 20ms$ |
+| **3. `WAV/WEM`** | импорт `<hash>_en.wav`, прямая подгрузка `.wav`, `probe` в БД, `encode sound2wem batch`, валидация по заголовку `WEM` | `WAV->WEM`, $\Delta T < 20ms$ |
 | **4. Тейки** | Циклозапись, автоцвет $RMS/ZCR/\delta$, маркировка, `Comp to Master` | Цвета в realtime |
 | **5. `LLM`** | `ILlmProvider + OpenRouter`, $3$ варианта, слоги/виземы, история | Переключение на `Ollama` без пересборки |
 | **6. `Denoise`** | `sidecar gRPC + DeepFilterNet3`, цепочка, `batch` | Ночной прогон $200$+ |
@@ -614,7 +615,7 @@ DubStudio/
 Аудио: RtAudio + ASIO SDK 2.3.4 (third_party/asio_sdk, не коммитить; исходник уже лежит в ASIO-SDK_2.3.4_2025-10-15/ASIOSDK).
 DSP: libsndfile, SoXR, RubberBand, Eigen.
 Python 3.11 sidecar по gRPC только для ИИ.
-GPL только как CLI (vgmstream), sound2wem по его лицензии, не линковать GPL в ядро.
+sound2wem по его лицензии, не линковать GPL в ядро.
 Структура: include/ интерфейсы, core/ реализация, tests/ Catch2.
 Один PR = один модуль. Перед кодом план в docs/plans/<модуль>.md.
 UI-текст только на русском.
@@ -646,7 +647,7 @@ UI-текст только на русском.
 
 ## 16. Что нужно дальше
 
-1. Вывод `vgmstream -m` на одном `.wem` + вывод `sound2wem --help` — для точного ТЗ Фазы 3.
+1. Вывод `sound2wem --help` — для точного ТЗ Фазы 3. Плюс вручную сконвертировать пробную партию `WEM -> WAV` и проверить, что имена `<hash>_en.wav` совпадают с ключами `combined.json`.
 2. Подтверждение дефолта `48000 / 24-bit`.
 3. Маппинг $2$-$3$ персонажей в `voice_id` — для Фазы 7.
 
