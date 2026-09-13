@@ -1,0 +1,51 @@
+{
+	"servers": {
+		"filesystem": {
+			"command": "npx",
+			"args": [
+				"-y",
+				"@modelcontextprotocol/server-filesystem",
+				"C:/Users/ОТ/Desktop/dub/dub-studio"
+			]
+		},
+		"fetch": {
+			"command": "npx",
+			"args": ["-y", "@modelcontextprotocol/server-fetch"]
+		},
+		"memory": {
+			"command": "npx",
+			"args": ["-y", "@modelcontextprotocol/server-memory"]
+		},
+		"sqlite": {
+			"command": "npx",
+			"args": [
+				"-y",
+				"@modelcontextprotocol/server-sqlite",
+				"--db-path",
+				"C:/Users/ОТ/Desktop/dub/dub-studio/MyDub/lines.db"
+			]
+		},
+		"git": {
+			"command": "uvx",
+			"args": [
+				"mcp-server-git",
+				"--repository",
+				"C:/Users/ОТ/Desktop/dub/dub-studio"
+			]
+		},
+		"github": {
+			"command": "docker",
+			"args": [
+				"run",
+				"-i",
+				"--rm",
+				"-e",
+				"GITHUB_PERSONAL_ACCESS_TOKEN",
+				"ghcr.io/github/github-mcp-server"
+			],
+			"env": {
+				"GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}"
+			}
+		}
+	}
+}

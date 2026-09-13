@@ -1,4 +1,4 @@
-# `RuDub Studio` — полный файл аналитики и проекта системы дубляжа
+# `DubStudio` — полный файл аналитики и проекта системы дубляжа
 
 > Единый консолидированный документ. Содержит все согласованные решения.
 > Масштаб: `1 проект = 1 игра`, формат `combined.json`, `42 файла / 2181 сцена / 39481 реплика`, `WEM Vorbis HQ`, `sound2wem`, `ASIO Focusrite`, `Windows`, `open-source`, `агентная разработка`.
@@ -27,7 +27,7 @@
 | 10 | `ElevenLabs` | `STS` + `TTS`, клон голоса персонажа, обязательный кэш `sha256`, виджет кредитов |
 | 11 | Проект | Рабочая директория `MyDub/` + экспорт `.dubpack`, `FLAC + ZSTD-12 + AES-GCM`, `CAS`, инкрементальность |
 | 12 | Режимы | Только `online`, без фолбэков. `Batch` обязателен. Автосейв настраиваемый |
-| 13 | Лицензии | Только `open-source` в линковке. `ASIO SDK` и `sound2wem` как внешний `SDK`/исходник, `vgmstream` как внешний `CLI` |
+| 13 | Лицензии | Только `open-source` в линковке. `ASIO SDK 2.3.4` уже скачан локально в `ASIO-SDK_2.3.4_2025-10-15/ASIOSDK` (dual license: Proprietary / GPLv3, не коммитить), `sound2wem` как внешний исходник, `vgmstream` как внешний `CLI` |
 | 14 | Разработка | Агентные ИИ, `C++20 + Qt6 + Python sidecar`, модульность через плагины, фазы `0-9` строго по порядку |
 
 ### 1.3 Железо
@@ -46,7 +46,7 @@
 
 ```cmake
 C++20 + Qt 6.5 LTS Widgets + CMake + Ninja + SQLite WAL
-Аудио I/O: RtAudio (MIT) + Steinberg ASIO SDK (внешний)
+Аудио I/O: RtAudio (MIT) + Steinberg ASIO SDK 2.3.4 (внешний, уже скачан в ASIO-SDK_2.3.4_2025-10-15/ASIOSDK)
 Файлы: libsndfile + dr_wav
 Ресемплинг: SoXR
 Time-stretch: RubberBand
@@ -128,7 +128,7 @@ combined.json -> lines.db -> decode_wem Job -> FLAC CAS
 Принцип плагина для ИИ-эффектов:
 
 ```cpp
-// include/rudub/plugin.h
+// include/dubstudio/plugin.h
 struct ProcessorDesc {
   std::string id;       // "denoise.deepfilternet3"
   std::string kind;     // "offline"
@@ -314,7 +314,7 @@ for fi, (file_id, scenes) in enumerate(data.items()):
 ### 6.1 Движок
 
 ```cpp
-// include/rudub/audio_engine.h
+// include/dubstudio/audio_engine.h
 class AudioEngine {
 public:
   bool openAsio(const std::string& device);
@@ -584,7 +584,7 @@ MyDub.dubpack           экспорт для переноса
 ### 15.1 Структура репо
 
 ```text
-RuDub/
+DubStudio/
   AGENTS.md
   docs/plans/
   docs/wem_params.md
@@ -599,19 +599,19 @@ RuDub/
   tests/
   third_party/rtaudio
   third_party/sound2wem
-  third_party/asio_sdk   # в .gitignore, скачать с сайта Steinberg
+  third_party/asio_sdk   # в .gitignore, НЕ коммитить; уже скачан локально в ASIO-SDK_2.3.4_2025-10-15/ASIOSDK (ASIO 2.3.4), при сборке скопировать/прилинковать оттуда: common/ + host/ + host/pc/
 ```
 
 ### 15.2 `MCP` минимум
 
-`filesystem` только `RuDub/`, `git + github` ветки `feat/*`, `sqlite` для `SELECT` на реальных $39481$, `fetch` для доков `RtAudio / OpenRouter / ElevenLabs / sound2wem`, `memory` для решений.
+`filesystem` только `DubStudio/`, `git + github` ветки `feat/*`, `sqlite` для `SELECT` на реальных $39481$, `fetch` для доков `RtAudio / OpenRouter / ElevenLabs / sound2wem`, `memory` для решений.
 
 ### 15.3 `AGENTS.md`
 
 ```markdown
-# AGENTS.md — RuDubStudio
+# AGENTS.md — DubStudio
 Стек: C++20, Qt6 Widgets, CMake+Ninja, SQLite WAL.
-Аудио: RtAudio + ASIO SDK (third_party/asio_sdk, не коммитить).
+Аудио: RtAudio + ASIO SDK 2.3.4 (third_party/asio_sdk, не коммитить; исходник уже лежит в ASIO-SDK_2.3.4_2025-10-15/ASIOSDK).
 DSP: libsndfile, SoXR, RubberBand, Eigen.
 Python 3.11 sidecar по gRPC только для ИИ.
 GPL только как CLI (vgmstream), sound2wem по его лицензии, не линковать GPL в ядро.
