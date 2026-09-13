@@ -38,7 +38,6 @@
 				"@modelcontextprotocol/server-memory"
 			],
 			"alwaysAllow": [
-				"create_relations",
 				"create_entities",
 				"add_observations",
 				"delete_entities",
