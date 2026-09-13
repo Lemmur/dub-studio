@@ -582,8 +582,11 @@ void MainWindow::onRecord() {
     }
 
     ++takeCounter_;
-    // Гарантия уникальности take_id: счётчик после рестарта берётся из БД,
-    // но строки могли остаться без WAV (MyDub удалён) — сверяемся с базой.
+    // id тейка = "<wem_hash>_take_<N>" (полный хэш реплики): файл
+    // MyDub/takes/<wem_hash>_take_<N>.wav зеркалит именование игры
+    // "<GUID>_en.wem" и сразу видна принадлежность реплике.
+    // Гарантия уникальности: счётчик после рестарта берётся из БД, но строки
+    // могли остаться без WAV (MyDub удалён) — сверяемся с базой.
     auto takeIdExists = [this](const QString& id) {
         sqlite3_stmt* st = nullptr;
         bool exists = false;
@@ -595,11 +598,11 @@ void MainWindow::onRecord() {
         }
         return exists;
     };
-    while (takeIdExists(QStringLiteral("take_%1_%2").arg(takeCounter_).arg(hash.left(8)))) {
+    while (takeIdExists(QStringLiteral("%1_take_%2").arg(hash).arg(takeCounter_))) {
         ++takeCounter_;
     }
     Clip clip;
-    clip.id = QStringLiteral("take_%1_%2").arg(takeCounter_).arg(hash.left(8)).toStdString();
+    clip.id = QStringLiteral("%1_take_%2").arg(hash).arg(takeCounter_).toStdString();
     clip.title = QStringLiteral("TAKE-%1").arg(takeCounter_, 2, 10, QLatin1Char('0')).toStdString();
     clip.wemHash = hash.toStdString();
     clip.sampleRate = engine_->sampleRate();

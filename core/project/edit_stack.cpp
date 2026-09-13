@@ -66,17 +66,28 @@ void clampFades(Clip& c) {
     c.fadeOutSamples = std::min<std::uint64_t>(c.fadeOutSamples, n);
 }
 
-// "take_7_AB12CD34" -> "TAKE-07", "take_7_AB12CD34.1" -> "TAKE-07.1"
+// Тайтл из id тейка. Форматы:
+//   новый:  "<wem_hash>_take_7" -> "TAKE-07" (файл "<wem_hash>_take_7.wav",
+//                                  зеркалит именование игры "<GUID>_en.wem")
+//   старый: "take_7_AB12CD34"   -> "TAKE-07" (базы Фазы 1/начала Фазы 2)
+// Суффикс ".k" — куски split: "<...>_take_7.1" -> "TAKE-07.1".
 std::string titleFromId(const std::string& id) {
-    if (!id.starts_with("take_")) return id;
-    const std::string rest = id.substr(5);
-    const std::size_t us = rest.find('_');
-    if (us == std::string::npos || us == 0) return id;
-    std::string num = rest.substr(0, us);
-    const std::string tail = rest.substr(us + 1);
-    const std::size_t dot = tail.find('.');
-    const std::string suffix = dot == std::string::npos ? std::string() : tail.substr(dot);
-    if (num.size() > 6 || num.empty() ||
+    std::string base = id;
+    std::string suffix;
+    const std::size_t dot = base.find('.');
+    if (dot != std::string::npos) {
+        suffix = base.substr(dot);
+        base = base.substr(0, dot);
+    }
+    std::string num;
+    if (base.rfind("take_", 0) == 0) {
+        const std::size_t us = base.find('_', 5);
+        if (us != std::string::npos && us > 5) num = base.substr(5, us - 5);
+    } else {
+        const std::size_t pos = base.rfind("_take_");
+        if (pos != std::string::npos) num = base.substr(pos + 6);
+    }
+    if (num.empty() || num.size() > 6 ||
         !std::all_of(num.begin(), num.end(), [](char ch) { return ch >= '0' && ch <= '9'; }))
         return id;
     while (num.size() < 2) num.insert(num.begin(), '0');
@@ -84,14 +95,14 @@ std::string titleFromId(const std::string& id) {
 }
 
 int takeNumFromId(const std::string& id) {
-    if (!id.starts_with("take_")) return 0;
-    const std::string rest = id.substr(5);
     std::string num;
-    for (char ch : rest) {
-        if (ch >= '0' && ch <= '9') {
-            num += ch;
-        } else {
-            break;
+    if (id.rfind("take_", 0) == 0) {
+        for (std::size_t i = 5; i < id.size() && id[i] >= '0' && id[i] <= '9'; ++i) num += id[i];
+    } else {
+        const std::size_t pos = id.rfind("_take_");
+        if (pos != std::string::npos) {
+            for (std::size_t i = pos + 6; i < id.size() && id[i] >= '0' && id[i] <= '9'; ++i)
+                num += id[i];
         }
     }
     return num.empty() ? 0 : std::atoi(num.c_str());

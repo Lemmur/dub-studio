@@ -49,7 +49,7 @@ struct TestProject {
     std::unique_ptr<Database> db;
     std::unique_ptr<ClipStore> store;
     std::unique_ptr<EditStack> edits;
-    std::string takeId = "take_1_ABCD1234";
+    std::string takeId = "HASH0001_take_1"; // формат: <wem_hash>_take_<N>
 
     static constexpr std::uint32_t kSr = 48000;
 
@@ -517,6 +517,16 @@ TEST_CASE("EditStack: maxTakeNum учитывает тейки без WAV (не�
     const auto s = p.edits->loadSession();
     CHECK(s.takes == 0);      // WAV нет — клип пропущен, сессия не упала
     CHECK(s.maxTakeNum == 1); // номер строки учтён -> следующий тейк будет №2
+}
+
+TEST_CASE("EditStack: старый формат id take_N_hash из баз Фазы 1", "[edit]") {
+    TestProject p;
+    p.takeId = "take_9_OLD12345";
+    p.addRecordedTake();
+    const auto s = p.edits->loadSession();
+    REQUIRE(s.takes == 1);
+    CHECK(s.maxTakeNum == 9);                          // номер распознан
+    CHECK(p.store->takes()[0].title == "TAKE-09");     // тайтл восстановлен
 }
 
 TEST_CASE("Автосейв: manifest.json и wal checkpoint", "[edit]") {
