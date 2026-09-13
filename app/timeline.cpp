@@ -31,7 +31,7 @@ QString formatTime(double seconds, bool ms) {
 TimelineWidget::TimelineWidget(QWidget* parent) : QWidget(parent) {
     setMouseTracking(false);
     setMinimumHeight(kRulerH + kRowH * (2 + kMinRowH));
-    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 }
 
 QSize TimelineWidget::minimumSizeHint() const {
@@ -72,6 +72,9 @@ void TimelineWidget::buildRows() {
 
 void TimelineWidget::syncTracks() {
     buildRows();
+    // Фиксированная высота = все дорожки: вертикальный скролл даёт
+    // обёртка QScrollArea (MainWindow::buildUi), виджет не обрезается.
+    setMinimumHeight(kRulerH + static_cast<int>(rows_.size()) * kRowH);
     clampView();
     update();
     updateGeometry();
@@ -207,11 +210,9 @@ void TimelineWidget::paintEvent(QPaintEvent*) {
     }
     p.setPen(QColor(0x55, 0x55, 0x55));
     p.drawLine(0, kRulerH - 1, width(), kRulerH - 1);
-
-    // --- Строки треков ---
-    const int nRows = static_cast<int>(rows_.size());
-    const int totalH = kRulerH + nRows * kRowH;
-    if (totalH > height()) resize(width(), totalH);
+// --- Строки треков ---
+const int nRows = static_cast<int>(rows_.size());
+Q_UNUSED(nRows);
 
     std::vector<float> mins, maxs;
     for (int r = 0; r < nRows; ++r) {

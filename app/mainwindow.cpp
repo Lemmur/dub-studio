@@ -32,6 +32,7 @@
 #include <QMessageBox>
 #include <QPainter>
 #include <QPalette>
+#include <QScrollArea>
 #include <QSettings>
 #include <QStandardItemModel>
 #include <QSpinBox>
@@ -187,13 +188,20 @@ void MainWindow::buildUi() {
     connect(search_, &QLineEdit::textChanged, this, &MainWindow::onSearchChanged);
 
     // --- Нижний док: таймлайн Track 0/1/N (Фаза 1) ---
+    // Vertical QScrollArea: дорожки TAKE-NN растут вниз, видим все через скролл.
+    // Горизонталь — своя (zoom колесом, drag-панорама), поэтому off.
     auto* tlDock = new QDockWidget(QStringLiteral("Таймлайн"), this);
     tlDock->setObjectName(QStringLiteral("timelineDock"));
     tlDock->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::TopDockWidgetArea);
-    timeline_ = new TimelineWidget(tlDock);
+    timeline_ = new TimelineWidget;
     timeline_->setEngine(engine_.get());
     timeline_->setStore(store_.get());
-    tlDock->setWidget(timeline_);
+    auto* tlScroll = new QScrollArea(tlDock);
+    tlScroll->setWidget(timeline_);
+    tlScroll->setWidgetResizable(true);
+    tlScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    tlScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    tlDock->setWidget(tlScroll);
     addDockWidget(Qt::BottomDockWidgetArea, tlDock);
 
     // --- Статус-бар ---
