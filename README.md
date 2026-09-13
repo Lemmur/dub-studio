@@ -46,7 +46,7 @@ include/rudub/    публичные интерфейсы модулей
 integrations/     ElevenLabs, OpenRouter (Фазы 5,7)
 plugins/          офлайн-эффекты по manifest.json (Фаза 6)
 workers/python/   Python sidecar (Фаза 6)
-third_party/      rtaudio, sound2wem; asio_sdk — вручную, не коммитить
+third_party/      rtaudio (заголовки ASIO в комплекте), dr_wav, sound2wem
 docs/             планы модулей, параметры WEM, лицензии
 tests/            Catch2
 schema.sql        схема lines.db (PLAN.md, раздел 5)

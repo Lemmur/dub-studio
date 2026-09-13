@@ -14,7 +14,7 @@
 | `FFmpeg` | — (ставится `zSound2wem.cmd` автоматически при первом запуске) | `LGPL/GPL` в зависимости от сборки | внешний `CLI` внутри скрипта `sound2wem`, НЕ линкуется в ядро | ещё не устанавливался |
 | `RtAudio` | 6.0.1 (vendored, [`third_party/rtaudio/rtaudio`](../third_party/rtaudio/rtaudio/RtAudio.h)) | `MIT` (см. [`LICENSE`](../third_party/rtaudio/rtaudio/LICENSE)) | статическая линковка ядра (`__WINDOWS_ASIO__` + `__WINDOWS_WASAPI__`) | подключено (Фаза 1) |
 | `ASIO headers` | 2.3 в составе `RtAudio` (redistribute by RtAudio) | Steinberg ASIO Licence (dual: Proprietary / `GPLv3`), вендорятся апстрим-репозиторием `RtAudio` | компиляция `RtApiAsio` | подключено (Фаза 1) |
-| `ASIO SDK` | 2.3.4 (полный) | Dual: Proprietary / `GPLv3` | локальная копия `ASIO-SDK_2.3.4_2025-10-15/ASIOSDK`, НЕ коммитить; для Фазы 1 не требуется (заголовки в `RtAudio`), задел на будущее | скачано локально |
+| `ASIO SDK` | 2.3.4 (полный) | Dual: Proprietary / `GPLv3` | не требуется: RtAudio вендорит заголовки ASIO 2.3; локальная копия `ASIO-SDK_2.3.4_2025-10-15/` удалена после Фазы 1 (при необходимости — скачать у Steinberg, не коммитить) | не используется |
 | `dr_wav` | master 2026-01 (single header, [`third_party/dr_wav`](../third_party/dr_wav/dr_wav.h)) | `MIT-0` | реализация `WavWriter` (PCM 24-bit) в ядре | подключено (Фаза 1) |
 | `vgmstream` | — | `GPL` | внешний `CLI` через `subprocess`, в ядро НЕ линковать | запланировано (Фаза 3) |
 | `libsndfile` / `dr_wav` / `SoXR` / `RubberBand` / `Eigen` | — | `LGPL`/`MIT`/`GPL`(см. ниже) | линковка ядра — проверить каждую перед Фазой 1–2 | запланировано |

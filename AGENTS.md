@@ -7,8 +7,8 @@
 ## Стек
 
 - `C++20`, `Qt 6.5 LTS Widgets`, `CMake + Ninja`, `SQLite WAL`.
-- Аудио: `RtAudio (MIT)` + `ASIO SDK 2.3.4` (`third_party/asio_sdk`, НЕ коммитить;
-  исходник уже лежит в `ASIO-SDK_2.3.4_2025-10-15/ASIOSDK`, при сборке брать `common/` + `host/` + `host/pc/` оттуда).
+- Аудио: `RtAudio 6.0.1 (MIT)` в `third_party/rtaudio/rtaudio` — заголовки `ASIO 2.3`
+  уже в комплекте (`include/`), внешний `ASIO SDK` НЕ нужен (удалён после Фазы 1).
 - `DSP`: `libsndfile`, `dr_wav`, `SoXR`, `RubberBand`, `Eigen`.
 - `JSON`: `nlohmann::json` (`ordered_json` — порядок ключей = порядок реплик в сцене).
 - Тесты: `Catch2`. Сеть: `Qt Network` (`REST` к `OpenRouter` / `ElevenLabs`).
@@ -73,8 +73,8 @@ docs/plans/          # план на каждый модуль ПЕРЕД код
 - Полная сборка: `scripts\build.bat` (первый запуск сам вызывает configure; `build\`).
 - Тесты: `scripts\test.bat` (`ctest`).
 - Qt передаётся через `CMAKE_PREFIX_PATH=C:/Qt/6.5.3/msvc2019_64` (уже зашито в скрипты).
-- ASIO SDK не коммитить: локальная копия в `ASIO-SDK_2.3.4_2025-10-15/ASIOSDK`,
-  при сборке копировать `common/` + `host/` + `host/pc/` в `third_party/asio_sdk/`.
+- Внешний `ASIO SDK` больше не используется (заголовки ASIO идут в комплекте RtAudio);
+  `third_party/asio_sdk/` в `.gitignore` оставлен на случай возврата к полному SDK.
 - Свободное место на `C:` ограничено (~6 GB) — тяжёлые сборки и кэши держать на `D:`.
 - Без `Qt`/`MSVC` агент выполняет только фазы, не требующие сборки (доки, `Python`-утилиты, схемы).
 
